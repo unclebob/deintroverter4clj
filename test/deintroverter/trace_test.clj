@@ -59,3 +59,17 @@
              resolve-ns)]
     (is (= {:verdict :introverted :reason :no-sut-assertion}
            (trace/trace-form '(count items) {} ctx)))))
+
+(deftest projects-sut-bound-symbol-trace-to-sut
+  (let [bindings {'command '(myapp.core/calculate-total items)}]
+    (is (= {:verdict :extroverted :reason nil}
+           (trace/trace-form '(:total command) bindings trace-ctx)))
+    (is (= {:verdict :extroverted :reason nil}
+           (trace/trace-form '(str/includes? (:message command) "ok")
+                             bindings
+                             trace-ctx)))))
+
+(deftest projects-non-sut-bound-symbol-stays-introverted
+  (let [bindings {'items '[1 2 3]}]
+    (is (= {:verdict :introverted :reason :no-sut-assertion}
+           (trace/trace-form '(count items) bindings trace-ctx)))))

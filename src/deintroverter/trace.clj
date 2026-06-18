@@ -84,6 +84,25 @@
     (some #{:likely} levels) {:verdict :likely-extroverted :reason :refer-all-heuristic}
     :else nil))
 
+(declare trace-form)
+
+(defn- symbols-in-form [form]
+  (cond
+    (symbol? form) #{form}
+    (seq? form)    (into #{} (mapcat symbols-in-form form))
+    (coll? form)   (into #{} (mapcat symbols-in-form form))
+    :else #{}))
+
+(defn- binding-origin-level [sym bindings ctx]
+  (case (:verdict (trace-form (get bindings sym) bindings ctx))
+    :extroverted :proven
+    :likely-extroverted :likely
+    nil))
+
+(defn- binding-origin-levels [form bindings ctx]
+  (keep #(binding-origin-level % bindings ctx)
+        (filter #(contains? bindings %) (symbols-in-form form))))
+
 (defn trace-form
   "Trace a form to determine assertion verdict.
   bindings: map of symbol → originating form from let, plus optional
@@ -105,7 +124,8 @@
     :else
     (let [expanded (expand-threading form)
           calls    (collect-calls expanded)
-          levels   (keep #(call-sut-level % ctx) calls)]
+          levels   (concat (keep #(call-sut-level % ctx) calls)
+                           (binding-origin-levels expanded bindings ctx))]
       (or (levels->verdict levels)
           (when (bindings-have-destructuring? bindings)
             {:verdict :questionable :reason :destructuring})
