@@ -14,6 +14,11 @@
          (sut/infer-sut-namespaces
           (assoc infer-opts :test-namespace 'myapp.core-test :requires #{})))))
 
+(deftest convention-strips-spec-suffix
+  (is (= #{'myapp.core}
+         (sut/infer-sut-namespaces
+          (assoc infer-opts :test-namespace 'myapp.core-spec :requires #{})))))
+
 (deftest excludes-clojure-and-test-libs
   (let [opts (assoc infer-opts
                     :test-namespace 'myapp.core-test

@@ -1,0 +1,8 @@
+#{map filter reduce count first rest next nth concat vec into apply identity comp
+  constantly not= = < > <= >= + - * / inc dec str keyword symbol vector?
+  list? seq? empty? not nil? true? false? some every? any?
+  contains? get get-in assoc dissoc update merge conj into-array
+  println prn format subs split join trim replace re-find re-matches
+  range repeat take drop partition group-by sort sort-by reverse
+  set union intersection difference keys vals zipmap flatten
+  with-out-str slurp spit read-string type class Math abs}

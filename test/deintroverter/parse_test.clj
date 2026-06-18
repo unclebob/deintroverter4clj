@@ -12,6 +12,11 @@
                    (str "(ns myapp.core-test)\n"
                         "(deftest t (is true))"))))))
 
+(deftest reads-var-literals
+  (is (= 1 (count (parse/read-string-all "(ns t (:require [foo.bar]))"))))
+  (is (= 1 (count (parse/read-string-all "(def x #'foo.bar/baz)"))))
+  (is (= 1 (count (parse/read-string-all "(def y @atom)")))))
+
 (deftest parses-ns-requires-and-aliases
   (is (= 'myapp.core-test
          (:namespace (parse/parse-ns-form sample-ns-form))))
@@ -19,3 +24,12 @@
          (get (:aliases (parse/parse-ns-form sample-ns-form)) 'core)))
   (is (= '#{clojure.test myapp.core}
          (set (:requires (parse/parse-ns-form sample-ns-form))))))
+
+(deftest parses-refer-all-and-refer-syms
+  (let [ns-form '(ns crap4clj.cli-spec
+                  (:require [crap4clj.cli :refer :all]
+                            [speclj.core :refer [describe it should=]]))
+        parsed  (parse/parse-ns-form ns-form)]
+    (is (= '#{crap4clj.cli} (:refer-all parsed)))
+    (is (= '{describe speclj.core, it speclj.core, should= speclj.core}
+           (:refer-syms parsed)))))

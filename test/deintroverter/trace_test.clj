@@ -4,7 +4,8 @@
 
 (def sut #{'myapp.core})
 (def resolve-ns (fn [sym] (if (symbol? sym) (name sym) sym)))
-(def trace-ctx {:sut sut :resolve-ns resolve-ns})
+(def ns-info {:refer-syms {} :refer-all #{}})
+(def trace-ctx (trace/make-trace-ctx ns-info sut resolve-ns))
 
 (deftest direct-sut-call-is-extroverted
   (is (= {:verdict :extroverted :reason nil}
@@ -34,3 +35,27 @@
          (trace/trace-form 'x
                            (array-map :destructuring? true)
                            trace-ctx))))
+
+(deftest refer-all-unqualified-call-is-likely-extroverted
+  (let [ctx (trace/make-trace-ctx
+             {:refer-syms {} :refer-all #{'myapp.core}}
+             sut
+             resolve-ns)]
+    (is (= {:verdict :likely-extroverted :reason :refer-all-heuristic}
+           (trace/trace-form '(calculate-total items) {} ctx)))))
+
+(deftest refer-syms-unqualified-call-is-extroverted
+  (let [ctx (trace/make-trace-ctx
+             {:refer-syms {'calculate-total 'myapp.core} :refer-all #{}}
+             sut
+             resolve-ns)]
+    (is (= {:verdict :extroverted :reason nil}
+           (trace/trace-form '(calculate-total items) {} ctx)))))
+
+(deftest core-sym-via-refer-all-stays-introverted
+  (let [ctx (trace/make-trace-ctx
+             {:refer-syms {} :refer-all #{'myapp.core}}
+             sut
+             resolve-ns)]
+    (is (= {:verdict :introverted :reason :no-sut-assertion}
+           (trace/trace-form '(count items) {} ctx)))))

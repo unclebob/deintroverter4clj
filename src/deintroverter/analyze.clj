@@ -31,7 +31,7 @@
          nil)))
    forms))
 
-(defn- process-forms [forms bindings ns-info sut]
+(defn- process-forms [forms bindings trace-ctx]
   (mapcat
    (fn [form]
      (cond
@@ -54,10 +54,10 @@
              new-bindings (if has-destructure?
                             (assoc new-bindings :destructuring? true)
                             new-bindings)]
-         (process-forms body new-bindings ns-info sut))
+         (process-forms body new-bindings trace-ctx))
 
        (#{'do 'try 'catch 'finally} (first form))
-       (process-forms (rest form) bindings ns-info sut)
+       (process-forms (rest form) bindings trace-ctx)
 
        :else
        (let [parsed (assertions/parse-assertion form)]
@@ -65,15 +65,17 @@
            (let [{:keys [asserted-form reason]} parsed]
              (if reason
                [{:verdict :questionable :reason reason}]
-               [(trace/trace-form asserted-form bindings
-                                  {:sut sut :resolve-ns (resolve-ns-fn ns-info)})]))
-           (process-forms (rest form) bindings ns-info sut)))))
+               [(trace/trace-form asserted-form bindings trace-ctx)]))
+           (process-forms (rest form) bindings trace-ctx)))))
    forms))
 
 (defn- test-verdict [results]
   (cond
     (some #(= :extroverted (:verdict %)) results)
     {:verdict :extroverted :reason nil}
+
+    (some #(= :likely-extroverted (:verdict %)) results)
+    {:verdict :likely-extroverted :reason :refer-all-heuristic}
 
     (some #(= :questionable (:verdict %)) results)
     {:verdict :questionable
@@ -94,10 +96,11 @@
         forms   (parse/read-string-all content)
         ns-form (first forms)
         ns-info (parse/parse-ns-form ns-form)
+        trace-ctx (trace/make-trace-ctx ns-info sut (resolve-ns-fn ns-info))
         tests   (find-tests forms)]
     (vec
      (for [{:keys [form test-name body line]} tests
-           :let [results (vec (process-forms body {} ns-info sut))
+           :let [results (vec (process-forms body {} trace-ctx))
                  {:keys [verdict reason]} (test-verdict results)]]
        {:file file-path
         :line line

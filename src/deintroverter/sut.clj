@@ -21,9 +21,14 @@
 
 (defn- convention-candidate [test-ns]
   (let [n (name test-ns)]
-    (when (.endsWith n "-test")
-      (symbol (namespace test-ns)
-              (subs n 0 (- (count n) 5))))))
+    (cond
+      (.endsWith n "-test")
+      (symbol (namespace test-ns) (subs n 0 (- (count n) 5)))
+
+      (.endsWith n "-spec")
+      (symbol (namespace test-ns) (subs n 0 (- (count n) 5)))
+
+      :else nil)))
 
 (defn- eligible? [ns-sym {:keys [project-ctx denylist]}]
   (and (contains? (:in-project-namespaces project-ctx) ns-sym)
@@ -38,8 +43,7 @@
         candidates (into #{}
                          (concat
                           (keep convention-candidate [test-namespace])
-                          requires))
-        eligible   (set (filter #(eligible? % ctx) candidates))]
-    (-> eligible
+                          requires))]
+    (-> (set (filter #(eligible? % ctx) candidates))
         (into add)
         (set/difference remove))))
