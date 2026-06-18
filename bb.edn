@@ -1,0 +1,6 @@
+{:paths ["src"]
+ :deps {borkdude/edamame {:mvn/version "1.4.27"}}
+ :tasks
+ {test {:extra-paths ["test"]
+        :exec-fn deintroverter.test-runner/run}
+  deintroverter {:main-opts ["-m" "deintroverter.core"]}}}
