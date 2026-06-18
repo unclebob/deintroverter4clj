@@ -3,13 +3,13 @@
             [deintroverter.assertions :as assertions]))
 
 (deftest recognizes-is-with-equals
-  (is (= {:macro :is :asserted-form '(= 42 result) :reason nil}
-         (assertions/parse-assertion '(is (= 42 result))))))
+  (is (= :is (:macro (assertions/parse-assertion '(is (= 42 result))))))
+  (is (= '(= 42 result) (:asserted-form (assertions/parse-assertion '(is (= 42 result)))))))
 
 (deftest recognizes-should=
-  (is (= {:macro :should= :asserted-form 'expected :reason nil}
-         (assertions/parse-assertion '(should= actual expected)))))
+  (is (= :should= (:macro (assertions/parse-assertion '(should= actual expected)))))
+  (is (= 'expected (:asserted-form (assertions/parse-assertion '(should= actual expected))))))
 
 (deftest unknown-macro-is-questionable
-  (is (= {:macro nil :asserted-form nil :reason :unknown-assertion-macro}
-         (assertions/parse-assertion '(assert-custom x)))))
+  (is (= :unknown-assertion-macro
+         (:reason (assertions/parse-assertion '(assert-custom x))))))

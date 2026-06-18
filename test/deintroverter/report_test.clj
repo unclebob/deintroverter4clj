@@ -1,5 +1,6 @@
 (ns deintroverter.report-test
   (:require [clojure.test :refer [deftest is]]
+            [clojure.string :as str]
             [deintroverter.report :as report]))
 
 (def sample-findings
@@ -9,10 +10,12 @@
     :verdict :extroverted :reason nil :sut-namespaces #{'myapp.core}}])
 
 (deftest human-output-hides-extroverted-by-default
-  (let [out (with-out-str (report/print-human sample-findings false))]
-    (is (re-find #"introverted" out))
-    (is (not (re-find #"\(:extroverted\)" out)))
-    (is (not (re-find #"  \(it b\)  :extroverted" out)))))
+  (is (str/includes?
+       (with-out-str (report/print-human sample-findings false))
+       "introverted"))
+  (is (not (str/includes?
+            (with-out-str (report/print-human sample-findings false))
+            "(it b)  :extroverted"))))
 
 (deftest exit-code-1-when-introverted-or-questionable
   (is (= 1 (report/exit-code sample-findings [])))

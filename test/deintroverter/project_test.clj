@@ -7,10 +7,12 @@
   (.getPath (io/file "test/deintroverter/fixtures/sample-project")))
 
 (deftest finds-deps-edn-walking-up
-  (let [from (.getPath (io/file fixture-root "src/myapp/core.clj"))]
-    (is (= fixture-root (project/find-project-root from)))))
+  (is (= fixture-root
+         (project/find-project-root
+          (.getPath (io/file fixture-root "src/myapp/core.clj"))))))
 
 (deftest discovers-in-project-namespaces
-  (let [ctx (project/load-context fixture-root)]
-    (is (contains? (:in-project-namespaces ctx) 'myapp.core))
-    (is (contains? (:external-dep-symbols ctx) 'org.clojure/test.check))))
+  (is (contains? (:in-project-namespaces (project/load-context fixture-root))
+                 'myapp.core))
+  (is (contains? (:external-dep-symbols (project/load-context fixture-root))
+                 'org.clojure/test.check)))

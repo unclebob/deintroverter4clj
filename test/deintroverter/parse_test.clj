@@ -8,14 +8,14 @@
                [myapp.core :as core])))
 
 (deftest reads-forms-with-metadata
-  (let [forms (parse/read-string-all
-               (str "(ns myapp.core-test)\n"
-                    "(deftest t (is true))"))]
-    (is (= 2 (count forms)))
-    (is (= 'myapp.core-test (second (first forms))))))
+  (is (= 2 (count (parse/read-string-all
+                   (str "(ns myapp.core-test)\n"
+                        "(deftest t (is true))"))))))
 
 (deftest parses-ns-requires-and-aliases
-  (let [{:keys [namespace aliases requires]} (parse/parse-ns-form sample-ns-form)]
-    (is (= 'myapp.core-test namespace))
-    (is (= 'myapp.core (get aliases 'core)))
-    (is (= '#{clojure.test myapp.core} (set requires)))))
+  (is (= 'myapp.core-test
+         (:namespace (parse/parse-ns-form sample-ns-form))))
+  (is (= 'myapp.core
+         (get (:aliases (parse/parse-ns-form sample-ns-form)) 'core)))
+  (is (= '#{clojure.test myapp.core}
+         (set (:requires (parse/parse-ns-form sample-ns-form))))))

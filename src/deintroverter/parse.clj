@@ -4,7 +4,7 @@
 (defn read-string-all
   "Read all top-level forms from a string. Attaches :line metadata to each form."
   [s]
-  (vec (edamame/parse-string-all s {:line-numbers? true})))
+  (vec (edamame/parse-string-all s {:line-numbers? true :fn true :regex true})))
 
 (defn- require-entry->ns-sym [entry]
   (cond

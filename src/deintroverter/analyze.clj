@@ -56,6 +56,9 @@
                             new-bindings)]
          (process-forms body new-bindings ns-info sut))
 
+       (#{'do 'try 'catch 'finally} (first form))
+       (process-forms (rest form) bindings ns-info sut)
+
        :else
        (let [parsed (assertions/parse-assertion form)]
          (if parsed

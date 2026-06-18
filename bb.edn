@@ -3,4 +3,5 @@
  :tasks
  {test {:extra-paths ["test"]
         :exec-fn deintroverter.test-runner/run}
-  deintroverter {:main-opts ["-m" "deintroverter.core"]}}}
+  deintroverter {:requires [[deintroverter.core :as core]]
+                 :exec-fn core/-main}}}

@@ -16,18 +16,18 @@
    {:test-namespace test-ns :requires requires
     :project-ctx project-ctx :add #{} :remove #{}}))
 
+(defn- analyze [file test-ns requires]
+  (analyze/analyze-file (fixture file) {:sut (sut-for test-ns requires)}))
+
 (deftest classifies-extroverted-deftest
-  (let [findings (analyze/analyze-file (fixture "extroverted_direct.clj")
-                                       {:sut (sut-for 'myapp.core-test #{'myapp.core})})]
-    (is (= 1 (count findings)))
-    (is (= :extroverted (:verdict (first findings))))))
+  (is (= 1 (count (analyze "extroverted_direct.clj" 'myapp.core-test #{'myapp.core}))))
+  (is (= :extroverted (:verdict (first (analyze "extroverted_direct.clj"
+                                                'myapp.core-test #{'myapp.core}))))))
 
 (deftest classifies-introverted-deftest
-  (let [findings (analyze/analyze-file (fixture "introverted_literal.clj")
-                                       {:sut (sut-for 'myapp.core-test #{})})]
-    (is (= :introverted (:verdict (first findings))))))
+  (is (= :introverted (:verdict (first (analyze "introverted_literal.clj"
+                                                'myapp.core-test #{}))))))
 
 (deftest classifies-questionable-destructure
-  (let [findings (analyze/analyze-file (fixture "questionable_destructure.clj")
-                                       {:sut (sut-for 'myapp.core-test #{'myapp.core})})]
-    (is (= :questionable (:verdict (first findings))))))
+  (is (= :questionable (:verdict (first (analyze "questionable_destructure.clj"
+                                                  'myapp.core-test #{'myapp.core}))))))

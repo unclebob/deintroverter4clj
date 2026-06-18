@@ -1,5 +1,6 @@
 (ns deintroverter.smoke-test
-  (:require [clojure.test :refer [deftest is testing]]))
+  (:require [clojure.test :refer [deftest is]]
+            [deintroverter.report :as report]))
 
-(deftest project-loads
-  (is (string? "deintroverter")))
+(deftest clean-run-exits-zero
+  (is (= 0 (report/exit-code [] []))))

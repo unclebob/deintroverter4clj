@@ -14,6 +14,14 @@
     (spit f content)
     f))
 
+(defn- delete-tree [^java.io.File f]
+  (when (.exists f)
+    (doseq [child (.listFiles f)] (delete-tree child))
+    (.delete f)))
+
+(defn- file-names [files]
+  (set (map #(.getName ^java.io.File %) files)))
+
 (deftest collects-clojure-files-recursively
   (let [dir (tmp-dir)]
     (try
@@ -22,20 +30,12 @@
       (write-file dir "src/sub/skip.txt" "nope")
       (write-file dir "nested/deep/c.cljs" "(ns c)")
       (is (= #{"a.clj" "b.cljc" "c.cljs"}
-             (set (map #(.getName %) (paths/collect-files [(.getPath dir)])))))
-      (finally
-        (.delete (io/file dir "src/sub/b.cljc"))
-        (.delete (io/file dir "src/sub"))
-        (.delete (io/file dir "src/a.clj"))
-        (.delete (io/file dir "src"))
-        (.delete (io/file dir "nested/deep/c.cljs"))
-        (.delete (io/file dir "nested/deep"))
-        (.delete (io/file dir "nested"))
-        (.delete dir)))))
+             (file-names (paths/collect-files [(.getPath dir)]))))
+      (finally (delete-tree dir)))))
 
 (deftest accepts-single-file
-  (let [dir (tmp-dir)
-        f   (write-file dir "one.clj" "(ns one)")]
+  (let [dir (tmp-dir)]
     (try
-      (is (= [f] (paths/collect-files [(.getPath f)])))
-      (finally (.delete f) (.delete dir)))))
+      (let [f (write-file dir "one.clj" "(ns one)")]
+        (is (= [f] (paths/collect-files [(.getPath f)]))))
+      (finally (delete-tree dir)))))
