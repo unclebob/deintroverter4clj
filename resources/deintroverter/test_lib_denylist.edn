@@ -1,0 +1,2 @@
+#{speclj.core speclj.spec-test clojure.test.check test.check
+  bond.james shrubbery.core}

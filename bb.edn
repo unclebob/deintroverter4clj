@@ -1,4 +1,4 @@
-{:paths ["src"]
+{:paths ["src" "resources"]
  :deps {borkdude/edamame {:mvn/version "1.4.27"}}
  :tasks
  {test {:extra-paths ["test"]
