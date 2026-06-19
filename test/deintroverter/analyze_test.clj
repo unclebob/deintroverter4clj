@@ -30,6 +30,13 @@
   (is (= :introverted (:verdict (first (analyze "introverted_literal.clj"
                                                 'myapp.core-test #{}))))))
 
+(deftest analyzes-file-with-docstring-defn
+  (let [findings (analyze "defn_docstring_helper.clj"
+                          'myapp.defn-doc-test
+                          #{'myapp.core})]
+    (is (= 1 (count findings)))
+    (is (= :deftest (:test-form (first findings))))))
+
 (deftest classifies-cloistered-when-reaching-test-module
   (is (= :cloistered (:verdict (first (analyze "cloistered_helpers.clj"
                                                 'myapp.cloistered-spec
@@ -155,3 +162,43 @@
     (is (contains? (:requires trace) 'myapp.core))
     (is (seq (:assertions trace)))
     (is (= :extroverted (:verdict (first (:assertions trace)))))))
+
+(deftest classifies-case-branch-assertion
+  (let [case-body (list 'let '[x (myapp.core/calculate-total [1])]
+                        (list 'case 'x
+                              :none '(is false)
+                              '(is (= x x))))
+        forms [(list 'ns 'myapp.case-test
+                      (list :require '[clojure.test :refer [deftest is]]
+                            '[myapp.core :as core]))
+               (list 'deftest 'case-branch case-body)]
+        findings (analyze/analyze-forms forms
+                                        {:sut (sut-for 'myapp.case-test #{'myapp.core})
+                                         :project-ctx project-ctx})]
+    (is (= 1 (count findings)))
+    (is (= :conditional-assertion (:verdict (first findings))))
+    (is (= :would-be-extroverted (:reason (first findings))))))
+
+(deftest classifies-introverted-conditional-assertion
+  (let [forms [(list 'ns 'myapp.intro-cond-test
+                      (list :require '[clojure.test :refer [deftest is]]))
+               (list 'deftest 'intro-in-when
+                     (list 'when true '(is (= 1 (count items)))))]
+        findings (analyze/analyze-forms forms
+                                        {:sut (sut-for 'myapp.intro-cond-test #{'myapp.core})
+                                         :project-ctx project-ctx})]
+    (is (= 1 (count findings)))
+    (is (= :conditional-assertion (:verdict (first findings))))
+    (is (= :no-sut-assertion (:reason (first findings))))))
+
+(deftest classifies-questionable-conditional-assertion
+  (let [forms [(list 'ns 'myapp.quest-cond-test
+                      (list :require '[clojure.test :refer [deftest is]]))
+               (list 'deftest 'quest-in-when
+                     (list 'when true '(expect= 1 2)))]
+        findings (analyze/analyze-forms forms
+                                        {:sut (sut-for 'myapp.quest-cond-test #{'myapp.core})
+                                         :project-ctx project-ctx})]
+    (is (= 1 (count findings)))
+    (is (= :conditional-assertion (:verdict (first findings))))
+    (is (= :unknown-assertion-macro (:reason (first findings))))))

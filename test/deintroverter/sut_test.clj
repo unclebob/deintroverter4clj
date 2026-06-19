@@ -20,6 +20,11 @@
          (sut/infer-sut-namespaces
           (assoc infer-opts :test-namespace 'myapp.core-spec :requires #{})))))
 
+(deftest convention-strips-test-suffix-to-in-project-ns
+  (is (= #{'myapp.helpers}
+         (sut/infer-sut-namespaces
+          (assoc infer-opts :test-namespace 'myapp.helpers-test :requires #{})))))
+
 (deftest excludes-clojure-and-test-libs
   (let [opts (assoc infer-opts
                     :test-namespace 'myapp.core-test

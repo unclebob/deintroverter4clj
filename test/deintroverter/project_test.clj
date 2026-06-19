@@ -9,7 +9,11 @@
 (deftest finds-deps-edn-walking-up
   (is (= fixture-root
          (project/find-project-root
-          (.getPath (io/file fixture-root "src/myapp/core.clj"))))))
+          (.getPath (io/file fixture-root "src/myapp/core.clj")))))
+  (is (= fixture-root (project/find-project-root fixture-root))
+      "starts from project directory")
+  (is (nil? (project/find-project-root "/tmp/no-deps-edn-here"))
+      "returns nil when no deps.edn exists"))
 
 (deftest discovers-in-project-namespaces
   (is (contains? (:in-project-namespaces (project/load-context fixture-root))

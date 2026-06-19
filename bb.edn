@@ -3,6 +3,9 @@
  :tasks
  {test {:extra-paths ["test"]
         :exec-fn deintroverter.test-runner/run}
+  spec {:doc "Run all tests (clj-mutate default runner)"
+        :extra-paths ["test"]
+        :exec-fn deintroverter.test-runner/run}
   deintroverter {:requires [[deintroverter.core :as core]]
                  :exec-fn core/-main}
   check-parens {:doc "Check Clojure paren balance and readability of a file"

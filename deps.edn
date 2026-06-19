@@ -1,1 +1,23 @@
-{:paths ["src" "resources"]}
+{:paths ["src" "resources"]
+ :deps {org.clojure/clojure {:mvn/version "1.12.0"}
+        borkdude/edamame {:mvn/version "1.4.27"}}
+ :aliases {:cov {:extra-deps {cloverage/cloverage {:mvn/version "1.2.4"}}
+                 :extra-paths ["test"]
+                 :main-opts ["-m" "cloverage.coverage"
+                             "-p" "src" "-s" "test" "--lcov"
+                             "-n" "deintroverter\\..*"
+                             "-t" "deintroverter\\..*-test"]}
+           :dry4clj {:extra-deps {io.github.unclebob/dry4clj
+                                  {:git/url "https://github.com/unclebob/dry4clj.git"
+                                   :git/sha "0e69df0d971324f3db739b40b6efbee893ca18e2"}}
+                    :main-opts ["-m" "dry4clj.core"]}
+           :crap4clj {:extra-deps {io.github.unclebob/crap4clj
+                                   {:git/url "https://github.com/unclebob/crap4clj.git"
+                                    :git/sha "c3f8e1bcc7820a7a2da57312bd2d6b98888353f4"}}
+                      :main-opts ["-m" "crap4clj.core"]}
+           :clj-mutate {:extra-deps {io.github.unclebob/clj-mutate
+                                      {:git/url "https://github.com/unclebob/clj-mutate.git"
+                                       :git/sha "e27dd5df63c4efdd66438587d1c5f49e73661b69"}
+                                     org.clojure/data.json {:mvn/version "2.5.1"}
+                                     org.clojure/tools.reader {:mvn/version "1.4.2"}}
+                        :main-opts ["-m" "clj-mutate.core"]}}}

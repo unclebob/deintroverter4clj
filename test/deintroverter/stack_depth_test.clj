@@ -37,33 +37,22 @@
   (is (= :extroverted
          (:verdict (trace/trace-form 'a999 (binding-chain 1000) trace-ctx)))))
 
-(deftest analyzes-empire-game-loop-spec-without-overflow
-  (let [empire-root "/Users/unclebob/projects/clojure/empire/empire-2025"
-        path (str empire-root "/spec/empire/game_loop/item_processing_computer_spec.clj")]
-    (when (.exists (java.io.File. path))
-      (let [project-ctx (project/load-context empire-root)
-            findings (analyze/analyze-file path
-                                          {:sut (:in-project-namespaces project-ctx)
-                                           :project-ctx project-ctx})]
-        (is (pos? (count findings)))))))
+(defn- nested-let-body [depth]
+  (loop [acc '(is (= 1 result)) n 0]
+    (if (= n depth)
+      acc
+      (recur (list 'let [(symbol (str "x" n)) n] acc)
+             (inc n)))))
 
 (deftest analyzes-deeply-nested-lets-without-overflow
   (let [project-ctx (project/load-context "test/deintroverter/fixtures/sample-project")
-        nested (loop [acc '(is (= 1 result)) n 0]
-                 (if (= n 500)
-                   acc
-                   (recur (list 'let [(symbol (str "x" n)) n] acc)
-                          (inc n))))
-        source (str "(ns myapp.deep-let-test\n"
-                    "  (:require [clojure.test :refer [deftest is]]\n"
-                    "            [myapp.core :as core]))\n"
-                    "(deftest deep-lets\n"
-                    "  (let [result (core/calculate-total [1])]\n"
-                    nested "))\n")
-        f (doto (java.io.File/createTempFile "deep-let" ".clj")
-            (.deleteOnExit))]
-    (spit f source)
-    (let [findings (analyze/analyze-file (.getPath f)
-                                         {:sut sut :project-ctx project-ctx})]
-      (is (= 1 (count findings)))
-      (is (= :extroverted (:verdict (first findings)))))))
+        forms [(list 'ns 'myapp.deep-let-test
+                      (list :require
+                            '[clojure.test :refer [deftest is]]
+                            '[myapp.core :as core]))
+               (list 'deftest 'deep-lets
+                     (list 'let '[result (myapp.core/calculate-total [1])]
+                           (nested-let-body 500)))]
+        findings (analyze/analyze-forms forms {:sut sut :project-ctx project-ctx})]
+    (is (= 1 (count findings)))
+    (is (= :extroverted (:verdict (first findings))))))

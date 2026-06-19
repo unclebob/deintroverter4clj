@@ -38,6 +38,18 @@
     (is (= '{describe speclj.core, it speclj.core, should= speclj.core}
            (:refer-syms parsed)))))
 
+(deftest parses-quoted-symbol-require-entry
+  (let [parsed (parse/parse-ns-form '(ns myapp.quoted-spec (:require 'myapp.core)))]
+    (is (contains? (:requires parsed) 'myapp.core))))
+
+(deftest parses-ns-without-require-clause
+  (let [parsed (parse/parse-ns-form '(ns myapp.bare))]
+    (is (= 'myapp.bare (:namespace parsed)))
+    (is (empty? (:requires parsed)))))
+
+(deftest reads-source-without-ns-form
+  (is (= 1 (count (parse/read-string-all "(def x 1)")))))
+
 (deftest reads-current-namespace-keywords
   (let [forms (parse/read-string-all
                (str "(ns myapp.geometry-spec)\n"

@@ -29,6 +29,21 @@
           {}
           trace-ctx))))
 
+(deftest thread-last-desugars-to-sut
+  (is (= {:verdict :extroverted :reason nil}
+         (trace/trace-form
+          '(->> items (myapp.core/calculate-total) (myapp.core/format))
+          {}
+          trace-ctx))))
+
+(deftest some-threading-macro-is-questionable
+  (is (= {:verdict :questionable :reason :unsupported-threading-macro}
+         (trace/trace-form '(some-> x (myapp.core/calculate-total)) {} trace-ctx))))
+
+(deftest anonymous-fn-is-questionable
+  (is (= {:verdict :questionable :reason :anonymous-fn}
+         (trace/trace-form '(fn [x] x) {} trace-ctx))))
+
 (deftest non-sut-only-is-introverted
   (is (= {:verdict :introverted :reason :no-sut-assertion}
          (trace/trace-form '(count items) {} trace-ctx))))
@@ -54,6 +69,14 @@
              resolve-ns)]
     (is (= {:verdict :extroverted :reason nil}
            (trace/trace-form '(calculate-total items) {} ctx)))))
+
+(deftest refer-syms-unqualified-var-ref-is-extroverted
+  (let [ctx (trace/make-trace-ctx
+             {:refer-syms {'calculate-total 'myapp.core} :refer-all #{}}
+             sut
+             resolve-ns)]
+    (is (= {:verdict :extroverted :reason nil}
+           (trace/trace-form '(vector calculate-total) {} ctx)))))
 
 (deftest core-sym-via-refer-all-stays-introverted
   (let [ctx (trace/make-trace-ctx
@@ -136,3 +159,36 @@
                    trace-ctx)]
     (is (= 1 (count (:binding-origins explained))))
     (is (= :extroverted (:verdict (first (:binding-origins explained)))))))
+
+(deftest reaches-test-module-via-direct-call
+  (let [ctx (assoc trace-ctx :test-modules #{'myapp.helpers-test})]
+    (is (true? (trace/reaches-test-module?
+                 '(myapp.helpers-test/valid-input? 1)
+                 {}
+                 ctx)))))
+
+(deftest make-trace-ctx-keeps-only-sut-refer-syms
+  (let [ctx (trace/make-trace-ctx
+             {:refer-syms {'calc 'myapp.core 'helper 'myapp.helpers}
+              :refer-all #{}}
+             sut
+             resolve-ns)]
+    (is (= {'calc 'myapp.core} (:refer-syms ctx)))
+    (is (not (contains? (:refer-syms ctx) 'helper)))))
+
+(deftest binding-from-refer-all-origin-is-likely-extroverted
+  (let [ctx (trace/make-trace-ctx {:refer-syms {} :refer-all #{'myapp.core}}
+                                  sut
+                                  resolve-ns)]
+    (is (= :likely-extroverted
+           (:verdict (trace/trace-form 'total
+                                       {'total '(calculate-total [1])}
+                                       ctx))))))
+
+(deftest explain-trace-collects-nested-symbols
+  (let [explained (trace/explain-trace '(+ x y) {'x 1 'y 2} trace-ctx)]
+    (is (= 2 (count (:binding-origins explained))))))
+
+(deftest traces-forms-with-literal-arguments
+  (is (= :introverted
+         (:verdict (trace/trace-form '(+ 1 items) {} trace-ctx)))))

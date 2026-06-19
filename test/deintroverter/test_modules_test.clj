@@ -1,23 +1,25 @@
 (ns deintroverter.test-modules-test
   (:require [clojure.test :refer [deftest is]]
             [deintroverter.project :as project]
-            [deintroverter.sut :as sut]
             [deintroverter.test-modules :as test-modules]))
 
 (def project-ctx
   (project/load-context "test/deintroverter/fixtures/sample-project"))
 
-(defn- infer [test-ns requires sut]
-  (test-modules/infer-test-module-namespaces
-   {:test-namespace test-ns
-    :requires requires
-    :sut sut
-    :project-ctx project-ctx}))
-
 (deftest detects-test-module-by-suffix
-  (is (contains? (infer 'myapp.cloistered-spec #{'myapp.helpers-test 'myapp.core}
-                      #{'myapp.core})
+  (is (contains? (test-modules/infer-test-module-namespaces
+                  {:test-namespace 'myapp.cloistered-spec
+                   :requires #{'myapp.helpers-test 'myapp.core}
+                   :sut #{'myapp.core}
+                   :project-ctx project-ctx})
                  'myapp.helpers-test)))
+
+(deftest accepts-distinct-test-module-namespace
+  (is (test-modules/test-module-namespace?
+        'myapp.helpers-test
+        {:test-namespace 'myapp.cloistered-spec
+         :sut #{'myapp.core}
+         :project-ctx project-ctx})))
 
 (deftest excludes-current-test-namespace
   (is (not (test-modules/test-module-namespace?
@@ -34,6 +36,9 @@
              :project-ctx project-ctx}))))
 
 (deftest detects-test-module-from-alias-extra-paths
-  (is (contains? (infer 'myapp.spec-mother-spec #{'myapp.spec-mother 'myapp.core}
-                      #{'myapp.core})
+  (is (contains? (test-modules/infer-test-module-namespaces
+                  {:test-namespace 'myapp.spec-mother-spec
+                   :requires #{'myapp.spec-mother 'myapp.core}
+                   :sut #{'myapp.core}
+                   :project-ctx project-ctx})
                  'myapp.spec-mother)))

@@ -53,3 +53,12 @@
                                        :format :edn
                                        :verbose true)))
        ":extroverted")))
+
+(deftest parse-args-recognizes-options
+  (is (true? (:help (core/parse-args ["--help"]))))
+  (is (= :edn (:format (core/parse-args ["--format" "edn" extroverted-fixture]))))
+  (is (true? (:verbose (core/parse-args ["--verbose" extroverted-fixture]))))
+  (is (= sample-project (:project-root (core/parse-args ["--project-root" sample-project]))))
+  (is (contains? (:add-sut (core/parse-args ["--sut-ns" "myapp.core"])) 'myapp.core))
+  (is (contains? (:remove-sut (core/parse-args ["--exclude-ns" "myapp.other"])) 'myapp.other))
+  (is (= [extroverted-fixture] (:paths (core/parse-args [extroverted-fixture])))))
