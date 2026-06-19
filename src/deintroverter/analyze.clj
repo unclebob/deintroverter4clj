@@ -17,6 +17,58 @@
 (defn- destructuring-binding? [k]
   (not (symbol? k)))
 
+(defn- fn-form? [form]
+  (and (seq? form) (#{'fn 'fn*} (first form))))
+
+(defn- fn-param-syms [fn-form]
+  (let [params (second fn-form)]
+    (if (vector? params) (vec params) (vector (first params)))))
+
+(defn- doseq-coll [coll-expr bindings]
+  (cond
+    (vector? coll-expr) coll-expr
+    (and (symbol? coll-expr) (contains? bindings coll-expr)) (get bindings coll-expr)
+    :else nil))
+
+(declare process-forms)
+
+(defn- bindings-for-doseq-item [bind-expr item bindings]
+  (cond
+    (symbol? bind-expr)
+    (assoc bindings bind-expr item)
+
+    (and (vector? bind-expr) (vector? item) (= 2 (count bind-expr))
+         (every? symbol? bind-expr) (= 2 (count item)))
+    (-> bindings
+        (assoc (bind-expr 0) (nth item 0))
+        (assoc (bind-expr 1) (nth item 1)))
+
+    :else bindings))
+
+(defn- process-doseq [form bindings trace-ctx]
+  (let [binding-form (second form)
+        body (drop 2 form)]
+    (if-not (and (vector? binding-form) (= 2 (count binding-form)))
+      (process-forms body bindings trace-ctx)
+      (let [[bind-expr coll-expr] binding-form
+            coll (doseq-coll coll-expr bindings)]
+        (if (vector? coll)
+          (mapcat (fn [item]
+                    (process-forms body
+                                   (bindings-for-doseq-item bind-expr item bindings)
+                                   trace-ctx))
+                  coll)
+          (process-forms body bindings trace-ctx))))))
+
+(defn- process-fn-invoke [form bindings trace-ctx]
+  (when (and (seq? form) (symbol? (first form)) (seq (rest form)))
+    (when-let [fn-form (get bindings (first form))]
+      (when (fn-form? fn-form)
+        (let [params (fn-param-syms fn-form)
+              body (drop 2 fn-form)
+              new-bindings (merge bindings (zipmap params (rest form)))]
+          (process-forms body new-bindings trace-ctx))))))
+
 (defn- find-tests [forms]
   (mapcat
    (fn [form]
@@ -59,20 +111,24 @@
        (#{'do 'try 'catch 'finally} (first form))
        (process-forms (rest form) bindings trace-ctx)
 
-       (#{'with-redefs 'doseq} (first form))
+       (= 'with-redefs (first form))
        (process-forms (drop 2 form) bindings trace-ctx)
+
+       (= 'doseq (first form))
+       (process-doseq form bindings trace-ctx)
 
        (= 'fn (first form))
        (process-forms (drop 2 form) bindings trace-ctx)
 
        :else
-       (let [parsed (assertions/parse-assertion form)]
-         (if parsed
-           (let [{:keys [asserted-form reason]} parsed]
-             (if reason
-               [{:verdict :questionable :reason reason}]
-               [(trace/trace-form asserted-form bindings trace-ctx)]))
-           (process-forms (rest form) bindings trace-ctx)))))
+       (or (process-fn-invoke form bindings trace-ctx)
+           (let [parsed (assertions/parse-assertion form)]
+             (if parsed
+               (let [{:keys [asserted-form reason]} parsed]
+                 (if reason
+                   [{:verdict :questionable :reason reason}]
+                   [(trace/trace-form asserted-form bindings trace-ctx)]))
+               (process-forms (rest form) bindings trace-ctx))))))
    forms))
 
 (defn- test-verdict [results]

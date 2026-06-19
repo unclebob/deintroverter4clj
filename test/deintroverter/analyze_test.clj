@@ -41,3 +41,8 @@
   (let [findings (analyze "speclj_setup.clj" 'myapp.setup-spec #{'myapp.core})]
     (is (= 2 (count findings)))
     (is (every? #(= :extroverted (:verdict %)) findings))))
+
+(deftest classifies-invoked-fn-literal-assertions
+  (let [findings (analyze "speclj_fn_assertions.clj" 'myapp.fn-assertions-spec #{'myapp.core})]
+    (is (= 1 (count findings)))
+    (is (= :extroverted (:verdict (first findings))))))
