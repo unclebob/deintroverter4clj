@@ -30,11 +30,11 @@
          (set (:requires (parse/parse-ns-form sample-ns-form))))))
 
 (deftest parses-refer-all-and-refer-syms
-  (let [ns-form '(ns crap4clj.cli-spec
-                  (:require [crap4clj.cli :refer :all]
+  (let [ns-form '(ns myapp.wrapper-spec
+                  (:require [myapp.wrapper :refer :all]
                             [speclj.core :refer [describe it should=]]))
         parsed  (parse/parse-ns-form ns-form)]
-    (is (= '#{crap4clj.cli} (:refer-all parsed)))
+    (is (= '#{myapp.wrapper} (:refer-all parsed)))
     (is (= '{describe speclj.core, it speclj.core, should= speclj.core}
            (:refer-syms parsed)))))
 

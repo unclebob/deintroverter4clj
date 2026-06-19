@@ -33,9 +33,9 @@
          (:macro (assertions/parse-assertion '(should-throw Exception (myapp.core/foo))))))
   (is (= '(myapp.core/foo)
          (:asserted-form (assertions/parse-assertion '(should-throw Exception (myapp.core/foo))))))
-  (is (= '(myapp.core/mutate x)
+  (is (= '(myapp.core/run-job x)
          (:asserted-form (assertions/parse-assertion
-                          '(should-throw clojure.lang.ExceptionInfo (myapp.core/mutate x)))))))
+                          '(should-throw clojure.lang.ExceptionInfo (myapp.core/run-job x)))))))
 
 (deftest unknown-assertion-like-macro-is-questionable
   (is (= :unknown-assertion-macro
