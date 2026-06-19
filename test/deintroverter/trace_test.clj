@@ -4,7 +4,10 @@
 
 (def sut #{'myapp.core})
 (def resolve-ns (fn [sym] (if (symbol? sym) (name sym) sym)))
-(def ns-info {:refer-syms {} :refer-all #{}})
+(def ns-info {:namespace 'myapp.core-test
+              :requires #{'myapp.core}
+              :refer-syms {}
+              :refer-all #{}})
 (def trace-ctx (trace/make-trace-ctx ns-info sut resolve-ns))
 
 (deftest direct-sut-call-is-extroverted
@@ -106,3 +109,26 @@
   (let [bindings {'waited? '(atom false)}]
     (is (= {:verdict :introverted :reason :no-sut-assertion}
            (trace/trace-form '(clojure.core/deref waited?) bindings trace-ctx)))))
+
+(deftest explain-trace-lists-calls-and-refer-resolution
+  (let [ctx (trace/make-trace-ctx
+             {:namespace 'myapp.fixture-spec
+              :requires #{'myapp.fixture}
+              :refer-syms {'make-item 'myapp.fixture 'valid-item? 'myapp.fixture}
+              :refer-all #{}}
+             #{'myapp.core}
+             resolve-ns)
+        explained (trace/explain-trace '(valid-item? (make-item)) {} ctx)]
+    (is (= '(valid-item? (make-item)) (:asserted-form explained)))
+    (is (= :introverted (:verdict explained)))
+    (is (= '#{{:sym valid-item? :resolved-ns myapp.fixture :level :none}
+             {:sym make-item :resolved-ns myapp.fixture :level :none}}
+           (set (:calls-traced explained))))))
+
+(deftest explain-trace-shows-binding-origins
+  (let [explained (trace/explain-trace
+                   'result
+                   {'result '(myapp.core/calculate-total items)}
+                   trace-ctx)]
+    (is (= 1 (count (:binding-origins explained))))
+    (is (= :extroverted (:verdict (first (:binding-origins explained)))))))

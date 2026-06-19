@@ -33,6 +33,25 @@ bb -m deintroverter.core --format edn --project-root ../my-app spec/
 bb -m deintroverter.core --verbose spec/
 ```
 
+### Stack depth on large projects
+
+Deeply nested test bodies (common in large Speclj suites) can exhaust Babashka's default JVM stack and fail with `StackOverflowError`. Increase the stack size with `BB_JVM_OPTS`:
+
+```bash
+BB_JVM_OPTS="-Xss32m" bb -m deintroverter.core --project-root ../my-app spec/
+```
+
+Start with `32m`; if errors persist, try `64m`.
+
+**Full-directory scans.** Even with a larger stack, pointing deintroverter at a large `spec/` tree in one invocation can still overflow — analysis is recursive and stack use accumulates across files in a single process. If a whole-directory scan fails, scan subdirectories or individual files instead:
+
+```bash
+BB_JVM_OPTS="-Xss32m" bb -m deintroverter.core --project-root ../my-app spec/my_app/game_logic/
+BB_JVM_OPTS="-Xss32m" bb -m deintroverter.core --project-root ../my-app spec/my_app/core_spec.clj
+```
+
+Each run is independent; combine the results manually or with a small wrapper script.
+
 ### Options
 
 | Option | Description |
@@ -87,7 +106,18 @@ By default, only introverted and questionable tests are printed. Use `--verbose`
  :findings [{:file "..." :line 42 :test-name "..."
              :test-form :it :verdict :introverted
              :reason :no-sut-assertion
-             :sut-namespaces #{my-app.core}}]
+             :sut-namespaces #{my-app.core}
+             :trace {:test-ns my-app.core-test
+                      :requires #{my-app.core}
+                      :refer-syms {calculate-total my-app.core}
+                      :sut-namespaces #{my-app.core}
+                      :assertions [{:asserted-form (calculate-total items)
+                                    :calls-traced [{:sym calculate-total
+                                                    :resolved-ns my-app.core
+                                                    :level :proven}]
+                                    :binding-origins []
+                                    :verdict :extroverted
+                                    :reason nil}]}}]
  :errors []}
 ```
 

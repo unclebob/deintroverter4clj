@@ -61,3 +61,11 @@
   (let [findings (analyze "speclj_fn_assertions.clj" 'myapp.fn-assertions-spec #{'myapp.core})]
     (is (= 1 (count findings)))
     (is (= :extroverted (:verdict (first findings))))))
+
+(deftest edn-findings-include-assertion-trace
+  (let [{:keys [trace]} (first (analyze "extroverted_direct.clj"
+                                        'myapp.core-test #{'myapp.core}))]
+    (is (= 'myapp.core-test (:test-ns trace)))
+    (is (contains? (:requires trace) 'myapp.core))
+    (is (seq (:assertions trace)))
+    (is (= :extroverted (:verdict (first (:assertions trace)))))))

@@ -56,6 +56,18 @@
   (when-let [target (invoke-target-sym form)]
     (sym-sut-level target ctx)))
 
+(defn- resolved-ns-for-sym [sym {:keys [resolve-ns all-refer-syms] :as ctx}]
+  (cond
+    (namespace sym) (fn-sym-ns sym ctx)
+    (contains? all-refer-syms sym) (get all-refer-syms sym)
+    :else nil))
+
+(defn- explain-call [form ctx]
+  (when-let [sym (invoke-target-sym form)]
+    {:sym sym
+     :resolved-ns (resolved-ns-for-sym sym ctx)
+     :level (or (call-sut-level form ctx) :none)}))
+
 (defn- collect-calls [form]
   (cond
     (not (seq? form)) #{}
@@ -183,17 +195,37 @@
             {:verdict :questionable :reason :destructuring})
           {:verdict :introverted :reason :no-sut-assertion}))))
 
+(defn explain-trace
+  "Return trace detail for a form: asserted calls, binding origins, and verdict.
+  bindings: let bindings active at the assertion (may include :destructuring?)."
+  [form bindings ctx]
+  (let [expanded (expand-threading form)
+        calls    (sort-by (comp str invoke-target-sym) (collect-calls expanded))]
+    {:asserted-form form
+     :calls-traced (vec (keep #(explain-call % ctx) calls))
+     :binding-origins
+     (vec (for [sym (sort (filter #(contains? bindings %)
+                                  (symbols-in-form expanded)))
+               :let [origin (get bindings sym)
+                     {:keys [verdict reason]} (trace-form origin bindings ctx)]]
+            {:sym sym :origin origin :verdict verdict :reason reason}))
+     :verdict (:verdict (trace-form form bindings ctx))
+     :reason (:reason (trace-form form bindings ctx))}))
+
 (defn make-trace-ctx
   "Build trace context from ns-info and the SUT namespace set."
-  [{:keys [refer-syms refer-all] :as _ns-info} sut resolve-ns]
-  (let [refer-syms (into {}
-                         (keep (fn [[sym ns]]
-                                 (when (contains? sut ns)
-                                   [sym ns]))
-                               refer-syms))
+  [{:keys [refer-syms refer-all] :as ns-info} sut resolve-ns]
+  (let [sut-refer-syms (into {}
+                             (keep (fn [[sym ns]]
+                                     (when (contains? sut ns)
+                                       [sym ns]))
+                                   refer-syms))
         refer-all-sut (clojure.set/intersection sut refer-all)]
     {:sut sut
      :resolve-ns resolve-ns
-     :refer-syms refer-syms
+     :refer-syms sut-refer-syms
+     :all-refer-syms refer-syms
      :refer-all-sut refer-all-sut
-     :core-syms (load-core-denylist)}))
+     :core-syms (load-core-denylist)
+     :test-ns (:namespace ns-info)
+     :requires (:requires ns-info)}))

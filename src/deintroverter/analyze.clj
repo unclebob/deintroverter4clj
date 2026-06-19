@@ -177,6 +177,25 @@
          nil)))
    forms))
 
+(defn- assertion-result
+  [form bindings trace-ctx]
+  (let [{:keys [verdict reason]} (trace/trace-form form bindings trace-ctx)]
+    {:verdict verdict
+     :reason reason
+     :trace (trace/explain-trace form bindings trace-ctx)}))
+
+(defn- questionable-result [form reason]
+  {:verdict :questionable
+   :reason reason
+   :trace {:assertion-form form}})
+
+(defn- build-finding-trace [trace-ctx sut assertion-results]
+  {:test-ns (:test-ns trace-ctx)
+   :requires (:requires trace-ctx)
+   :refer-syms (:all-refer-syms trace-ctx)
+   :sut-namespaces sut
+   :assertions (vec (map :trace assertion-results))})
+
 (defn- process-forms [forms bindings trace-ctx]
   (mapcat
    (fn [form]
@@ -223,8 +242,8 @@
              (if parsed
                (let [{:keys [asserted-form reason]} parsed]
                  (if reason
-                   [{:verdict :questionable :reason reason}]
-                   [(trace/trace-form asserted-form bindings trace-ctx)]))
+                   [(questionable-result form reason)]
+                   [(assertion-result asserted-form bindings trace-ctx)]))
                (process-forms (rest form) bindings trace-ctx))))))
    forms))
 
@@ -267,4 +286,5 @@
         :test-form form
         :verdict verdict
         :reason reason
-        :sut-namespaces sut}))))
+        :sut-namespaces sut
+        :trace (build-finding-trace trace-ctx sut results)}))))
