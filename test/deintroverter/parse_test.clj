@@ -37,3 +37,18 @@
     (is (= '#{crap4clj.cli} (:refer-all parsed)))
     (is (= '{describe speclj.core, it speclj.core, should= speclj.core}
            (:refer-syms parsed)))))
+
+(deftest reads-current-namespace-keywords
+  (let [forms (parse/read-string-all
+               (str "(ns myapp.geometry-spec)\n"
+                    "(s/def ::number number?)"))]
+    (is (= 2 (count forms)))
+    (is (= '(s/def :myapp.geometry-spec/number number?) (second forms)))))
+
+(deftest reads-alias-qualified-keywords
+  (let [forms (parse/read-string-all
+               (str "(ns myapp.game-spec\n"
+                    "  (:require [clojure.spec.alpha :as s]\n"
+                    "            [myapp.game :as game]))\n"
+                    "(s/explain-data ::s/player (game/make-player))"))]
+    (is (= 2 (count forms)))))
