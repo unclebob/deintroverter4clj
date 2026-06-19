@@ -30,3 +30,13 @@
   (is (= 1 (report/exit-code sample-findings [])))
   (is (= 0 (report/exit-code [{:verdict :extroverted}] [])))
   (is (= 0 (report/exit-code [{:verdict :likely-extroverted}] []))))
+
+(deftest summary-groups-questionable-and-introverted-by-reason
+  (let [findings (concat sample-findings
+                         [{:verdict :questionable :reason :unknown-assertion-macro}
+                          {:verdict :questionable :reason :unknown-assertion-macro}
+                          {:verdict :questionable :reason :destructuring}])
+        summary (:summary (report/build-edn "/proj" findings []))]
+    (is (= {:total 1 :no-sut-assertion 1} (:introverted summary)))
+    (is (= {:total 3 :unknown-assertion-macro 2 :destructuring 1}
+           (:questionable summary)))))

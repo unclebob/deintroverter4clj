@@ -1,11 +1,20 @@
 (ns deintroverter.report
   (:require [clojure.pprint :as pprint]))
 
+(defn- summarize-by-reason [findings verdict]
+  (let [matched (filter #(= verdict (:verdict %)) findings)]
+    (if (empty? matched)
+      {:total 0}
+      (into {:total (count matched)}
+            (map (fn [[reason findings]]
+                   [reason (count findings)])
+                 (group-by :reason matched))))))
+
 (defn- summarize [findings]
   {:extroverted        (count (filter #(= :extroverted (:verdict %)) findings))
    :likely-extroverted (count (filter #(= :likely-extroverted (:verdict %)) findings))
-   :introverted        (count (filter #(= :introverted (:verdict %)) findings))
-   :questionable       (count (filter #(= :questionable (:verdict %)) findings))})
+   :introverted        (summarize-by-reason findings :introverted)
+   :questionable       (summarize-by-reason findings :questionable)})
 
 (defn- report-by-default? [verdict verbose?]
   (or verbose?
