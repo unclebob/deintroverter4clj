@@ -145,15 +145,19 @@
         (recur (push-children stack (form-children node))
                (if (symbol? node) (conj syms node) syms))))))
 
-(defn- binding-origin-level [sym bindings ctx]
-  (case (:verdict (trace-form (get bindings sym) bindings ctx))
-    :extroverted :proven
-    :likely-extroverted :likely
-    nil))
+(defn- binding-origin-level [sym bindings ctx tracing-syms]
+  (when-not (contains? tracing-syms sym)
+    (case (:verdict (trace-form (get bindings sym) bindings ctx (conj tracing-syms sym)))
+      :extroverted :proven
+      :likely-extroverted :likely
+      nil)))
 
-(defn- binding-origin-levels [form bindings ctx]
-  (keep #(binding-origin-level % bindings ctx)
-        (filter #(contains? bindings %) (symbols-in-form form))))
+(defn- binding-origin-levels
+  ([form bindings ctx]
+   (binding-origin-levels form bindings ctx #{}))
+  ([form bindings ctx tracing-syms]
+   (keep #(binding-origin-level % bindings ctx tracing-syms)
+         (filter #(contains? bindings %) (symbols-in-form form)))))
 
 (defn- deref-form? [form]
   (and (seq? form)
@@ -269,25 +273,27 @@
   ctx: {:sut :resolve-ns :refer-syms :refer-all-sut :core-syms}
   Returns {:verdict :extroverted|:likely-extroverted|:introverted|:questionable
            :reason keyword-or-nil}"
-  [form bindings ctx]
-  (let [form (resolve-bound-form form bindings)]
-    (cond
-    (and (seq? form) (#{'as-> 'some-> 'some->> 'cond->} (first form)))
-    {:verdict :questionable :reason :unsupported-threading-macro}
+  ([form bindings ctx]
+   (trace-form form bindings ctx #{}))
+  ([form bindings ctx tracing-syms]
+   (let [form (resolve-bound-form form bindings)]
+     (cond
+       (and (seq? form) (#{'as-> 'some-> 'some->> 'cond->} (first form)))
+       {:verdict :questionable :reason :unsupported-threading-macro}
 
-    (and (seq? form) (= 'fn (first form)))
-    {:verdict :questionable :reason :anonymous-fn}
+       (and (seq? form) (= 'fn (first form)))
+       {:verdict :questionable :reason :anonymous-fn}
 
-    :else
-    (let [expanded (expand-threading form)
-          calls    (collect-calls expanded)
-          levels   (concat (keep #(call-sut-level % ctx) calls)
-                           (sut-var-ref-levels expanded bindings ctx)
-                           (binding-origin-levels expanded bindings ctx))]
-      (or (levels->verdict levels)
-          (when (bindings-have-destructuring? bindings)
-            {:verdict :questionable :reason :destructuring})
-          {:verdict :introverted :reason :no-sut-assertion})))))
+       :else
+       (let [expanded (expand-threading form)
+             calls    (collect-calls expanded)
+             levels   (concat (keep #(call-sut-level % ctx) calls)
+                              (sut-var-ref-levels expanded bindings ctx)
+                              (binding-origin-levels expanded bindings ctx tracing-syms))]
+         (or (levels->verdict levels)
+             (when (bindings-have-destructuring? bindings)
+               {:verdict :questionable :reason :destructuring})
+             {:verdict :introverted :reason :no-sut-assertion}))))))
 
 (defn explain-trace
   "Return trace detail for a form: asserted calls, binding origins, and verdict.

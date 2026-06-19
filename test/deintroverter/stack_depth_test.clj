@@ -37,6 +37,16 @@
   (is (= :extroverted
          (:verdict (trace/trace-form 'a999 (binding-chain 1000) trace-ctx)))))
 
+(deftest analyzes-empire-game-loop-spec-without-overflow
+  (let [empire-root "/Users/unclebob/projects/clojure/empire/empire-2025"
+        path (str empire-root "/spec/empire/game_loop/item_processing_computer_spec.clj")]
+    (when (.exists (java.io.File. path))
+      (let [project-ctx (project/load-context empire-root)
+            findings (analyze/analyze-file path
+                                          {:sut (:in-project-namespaces project-ctx)
+                                           :project-ctx project-ctx})]
+        (is (pos? (count findings)))))))
+
 (deftest analyzes-deeply-nested-lets-without-overflow
   (let [project-ctx (project/load-context "test/deintroverter/fixtures/sample-project")
         nested (loop [acc '(is (= 1 result)) n 0]

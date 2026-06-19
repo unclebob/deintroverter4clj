@@ -125,6 +125,10 @@
              {:sym make-item :resolved-ns myapp.fixture :level :none}}
            (set (:calls-traced explained))))))
 
+(deftest cyclic-binding-origin-does-not-overflow
+  (is (= {:verdict :introverted :reason :no-sut-assertion}
+         (trace/trace-form '(count x) {'x '(count x)} trace-ctx))))
+
 (deftest explain-trace-shows-binding-origins
   (let [explained (trace/explain-trace
                    'result
