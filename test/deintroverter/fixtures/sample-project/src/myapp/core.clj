@@ -5,3 +5,6 @@
 
 (defn split-items [items]
   [(first items) (second items)])
+
+(defn labeled-pair [a b]
+  {:a a :b b})

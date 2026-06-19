@@ -17,6 +17,103 @@
 (defn- destructuring-binding? [k]
   (not (symbol? k)))
 
+(defn- simple-vector-pattern? [pattern]
+  (and (vector? pattern) (seq pattern)
+       (not (some #(= '& %) pattern))
+       (every? symbol? pattern)))
+
+(defn- vector-rest-pattern? [pattern]
+  (and (vector? pattern)
+       (let [idx (.indexOf pattern '&)]
+         (and (not (neg? idx))
+              (= (inc idx) (dec (count pattern)))
+              (symbol? (nth pattern (inc idx)))
+              (every? symbol? (subvec pattern 0 idx))))))
+
+(defn- supported-vector-pattern? [pattern]
+  (or (simple-vector-pattern? pattern)
+      (vector-rest-pattern? pattern)))
+
+(def ^:private map-destructure-keys
+  #{:keys :syms :strs :as :or})
+
+(defn- symbol-vector? [v]
+  (and (vector? v) (every? symbol? v)))
+
+(defn- supported-map-pattern? [pattern]
+  (and (map? pattern)
+       (every? map-destructure-keys (keys pattern))
+       (every? symbol-vector? (keep #(get pattern %) [:keys :syms :strs]))
+       (or (nil? (:as pattern)) (symbol? (:as pattern)))
+       (or (nil? (:or pattern)) (map? (:or pattern)))))
+
+(defn- supported-destructure-pattern? [pattern]
+  (or (supported-vector-pattern? pattern)
+      (supported-map-pattern? pattern)))
+
+(defn- unsupported-destructure-pattern? [pattern]
+  (and (destructuring-binding? pattern)
+       (not (supported-destructure-pattern? pattern))))
+
+(defn- nth-binding [rhs i]
+  (if (vector? rhs) (nth rhs i) `(nth ~rhs ~i)))
+
+(defn- drop-binding [rhs n]
+  (if (vector? rhs) (vec (drop n rhs)) `(drop ~n ~rhs)))
+
+(defn- get-binding [rhs key]
+  (if (and (map? rhs) (contains? rhs key)) (get rhs key) `(get ~rhs ~key)))
+
+(defn- with-or-default [expr sym or-map]
+  (if-let [default (get or-map sym)]
+    `(or ~expr ~default)
+    expr))
+
+(defn- bind-vector-positions [syms rhs bindings]
+  (reduce (fn [b [i sym]]
+            (assoc b sym (nth-binding rhs i)))
+          bindings
+          (map-indexed vector syms)))
+
+(defn- expand-vector-destructure [pattern rhs bindings]
+  (let [ampersand-idx (.indexOf pattern '&)]
+    (if (neg? ampersand-idx)
+      (bind-vector-positions pattern rhs bindings)
+      (let [fixed (subvec pattern 0 ampersand-idx)
+            rest-sym (nth pattern (inc ampersand-idx))
+            bindings (assoc bindings rest-sym (drop-binding rhs (count fixed)))]
+        (bind-vector-positions fixed rhs bindings)))))
+
+(defn- expand-map-destructure [pattern rhs bindings]
+  (let [or-map (:or pattern)]
+    (reduce-kv
+     (fn [b k v]
+       (case k
+         :keys (reduce (fn [b2 sym]
+                         (let [expr (get-binding rhs (keyword (name sym)))]
+                           (assoc b2 sym (with-or-default expr sym or-map))))
+                       b v)
+         :syms (reduce (fn [b2 sym]
+                         (let [expr (get-binding rhs (list 'quote sym))]
+                           (assoc b2 sym (with-or-default expr sym or-map))))
+                       b v)
+         :strs (reduce (fn [b2 sym]
+                         (let [expr (get-binding rhs (name sym))]
+                           (assoc b2 sym (with-or-default expr sym or-map))))
+                       b v)
+         :as (assoc b v rhs)
+         :or b
+         b))
+     bindings
+     pattern)))
+
+(defn- expand-destructure-bindings [pattern rhs bindings]
+  (cond
+    (symbol? pattern) (assoc bindings pattern rhs)
+    (supported-vector-pattern? pattern) (expand-vector-destructure pattern rhs bindings)
+    (supported-map-pattern? pattern) (expand-map-destructure pattern rhs bindings)
+    :else bindings))
+
 (defn- fn-form? [form]
   (and (seq? form) (#{'fn 'fn*} (first form))))
 
@@ -37,11 +134,8 @@
     (symbol? bind-expr)
     (assoc bindings bind-expr item)
 
-    (and (vector? bind-expr) (vector? item) (= 2 (count bind-expr))
-         (every? symbol? bind-expr) (= 2 (count item)))
-    (-> bindings
-        (assoc (bind-expr 0) (nth item 0))
-        (assoc (bind-expr 1) (nth item 1)))
+    (supported-destructure-pattern? bind-expr)
+    (expand-destructure-bindings bind-expr item bindings)
 
     :else bindings))
 
@@ -97,13 +191,16 @@
              pairs (if (vector? binding-form)
                        (partition 2 binding-form)
                        (partition 2 after-bindings))
-             has-destructure? (some (fn [[k _]] (destructuring-binding? k)) pairs)
+             unsupported-destructure?
+             (some (fn [[k _]] (unsupported-destructure-pattern? k)) pairs)
              new-bindings (reduce (fn [b [k v]]
-                                    (if (symbol? k)
-                                      (assoc b k v)
-                                      b))
+                                    (cond
+                                      (symbol? k) (assoc b k v)
+                                      (supported-destructure-pattern? k)
+                                      (expand-destructure-bindings k v b)
+                                      :else b))
                                   bindings pairs)
-             new-bindings (if has-destructure?
+             new-bindings (if unsupported-destructure?
                             (assoc new-bindings :destructuring? true)
                             new-bindings)]
          (process-forms body new-bindings trace-ctx))

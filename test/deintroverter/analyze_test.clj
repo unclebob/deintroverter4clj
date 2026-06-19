@@ -28,9 +28,24 @@
   (is (= :introverted (:verdict (first (analyze "introverted_literal.clj"
                                                 'myapp.core-test #{}))))))
 
-(deftest classifies-questionable-destructure
-  (is (= :questionable (:verdict (first (analyze "questionable_destructure.clj"
-                                                  'myapp.core-test #{'myapp.core}))))))
+(deftest classifies-extroverted-vector-destructure
+  (is (= :extroverted (:verdict (first (analyze "questionable_destructure.clj"
+                                                 'myapp.core-test #{'myapp.core}))))))
+
+(deftest classifies-extroverted-map-keys-destructure
+  (is (= :extroverted (:verdict (first (analyze "extroverted_destructure_keys.clj"
+                                                 'myapp.destructure-keys-test
+                                                 #{'myapp.core}))))))
+
+(deftest classifies-extroverted-rest-destructure
+  (is (= :extroverted (:verdict (first (analyze "extroverted_destructure_rest.clj"
+                                                 'myapp.destructure-rest-test
+                                                 #{'myapp.core}))))))
+
+(deftest classifies-questionable-nested-destructure
+  (is (= :questionable (:verdict (first (analyze "questionable_nested_destructure.clj"
+                                                  'myapp.nested-destructure-test
+                                                  #{'myapp.core}))))))
 
 (deftest classifies-speclj-wrappers-as-extroverted
   (let [findings (analyze "speclj_wrappers.clj" 'myapp.wrapper-spec #{'myapp.core})]
