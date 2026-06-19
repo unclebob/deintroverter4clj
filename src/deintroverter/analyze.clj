@@ -177,12 +177,24 @@
          nil)))
    forms))
 
+(defn- sut-invoke-form? [form _bindings trace-ctx]
+  (trace/direct-sut-invoke-form? form trace-ctx))
+
 (defn- assertion-result
   [form bindings trace-ctx]
   (let [{:keys [verdict reason]} (trace/trace-form form bindings trace-ctx)]
     {:verdict verdict
      :reason reason
      :trace (trace/explain-trace form bindings trace-ctx)}))
+
+(defn- stub-assertion-result
+  [assertion-form bindings trace-ctx preceding-sut]
+  (let [trace-target (or preceding-sut assertion-form)
+        {:keys [verdict reason]} (trace/trace-form trace-target bindings trace-ctx)
+        trace (assoc (trace/explain-trace trace-target bindings trace-ctx)
+                     :assertion-form assertion-form
+                     :preceding-sut-call preceding-sut)]
+    {:verdict verdict :reason reason :trace trace}))
 
 (defn- questionable-result [form reason]
   {:verdict :questionable
@@ -196,56 +208,87 @@
    :sut-namespaces sut
    :assertions (vec (map :trace assertion-results))})
 
+(defn- let-bindings [form bindings]
+  (let [after-bindings (rest form)
+        binding-form   (first after-bindings)
+        body           (rest after-bindings)
+        pairs (if (vector? binding-form)
+                (partition 2 binding-form)
+                (partition 2 after-bindings))
+        unsupported-destructure?
+        (some (fn [[k _]] (unsupported-destructure-pattern? k)) pairs)
+        new-bindings (reduce (fn [b [k v]]
+                               (cond
+                                 (symbol? k) (assoc b k v)
+                                 (supported-destructure-pattern? k)
+                                 (expand-destructure-bindings k v b)
+                                 :else b))
+                             bindings pairs)
+        new-bindings (if unsupported-destructure?
+                       (assoc new-bindings :destructuring? true)
+                       new-bindings)]
+    {:body body :bindings new-bindings}))
+
+(declare process-forms-sequential)
+
+(defn- process-one-form [form bindings trace-ctx preceding]
+  (cond
+    (not (seq? form))
+    {:results [] :preceding preceding}
+
+    (= 'let (first form))
+    (let [{:keys [body bindings]} (let-bindings form bindings)]
+      (assoc (process-forms-sequential body bindings trace-ctx nil)
+             :preceding preceding))
+
+    (#{'do 'try 'catch 'finally} (first form))
+    (assoc (process-forms-sequential (rest form) bindings trace-ctx preceding)
+           :preceding preceding)
+
+    (= 'with-redefs (first form))
+    (assoc (process-forms-sequential (drop 2 form) bindings trace-ctx preceding)
+           :preceding preceding)
+
+    (= 'doseq (first form))
+    {:results (process-doseq form bindings trace-ctx) :preceding preceding}
+
+    (= 'fn (first form))
+    (assoc (process-forms-sequential (drop 2 form) bindings trace-ctx nil)
+           :preceding preceding)
+
+    :else
+    (or (when-let [results (process-fn-invoke form bindings trace-ctx)]
+          {:results results :preceding preceding})
+        (let [parsed (assertions/parse-assertion form)]
+          (cond
+            (and parsed (assertions/stub-invocation? parsed))
+            {:results [(stub-assertion-result form bindings trace-ctx preceding)]
+             :preceding preceding}
+
+            (and parsed (:reason parsed))
+            {:results [(questionable-result form (:reason parsed))]
+             :preceding preceding}
+
+            parsed
+            {:results [(assertion-result (:asserted-form parsed) bindings trace-ctx)]
+             :preceding preceding}
+
+            (sut-invoke-form? form bindings trace-ctx)
+            {:results [] :preceding form}
+
+            :else
+            (assoc (process-forms-sequential (rest form) bindings trace-ctx nil)
+                   :preceding preceding))))))
+
+(defn- process-forms-sequential [forms bindings trace-ctx preceding]
+  (loop [forms (seq forms), bindings bindings, preceding preceding, results []]
+    (if (empty? forms)
+      {:results results :preceding preceding}
+      (let [step (process-one-form (first forms) bindings trace-ctx preceding)]
+        (recur (rest forms) bindings (:preceding step) (into results (:results step)))))))
+
 (defn- process-forms [forms bindings trace-ctx]
-  (mapcat
-   (fn [form]
-     (cond
-       (not (seq? form))
-       []
-
-       (= 'let (first form))
-       (let [after-bindings (rest form)
-             binding-form   (first after-bindings)
-             body           (rest after-bindings)
-             pairs (if (vector? binding-form)
-                       (partition 2 binding-form)
-                       (partition 2 after-bindings))
-             unsupported-destructure?
-             (some (fn [[k _]] (unsupported-destructure-pattern? k)) pairs)
-             new-bindings (reduce (fn [b [k v]]
-                                    (cond
-                                      (symbol? k) (assoc b k v)
-                                      (supported-destructure-pattern? k)
-                                      (expand-destructure-bindings k v b)
-                                      :else b))
-                                  bindings pairs)
-             new-bindings (if unsupported-destructure?
-                            (assoc new-bindings :destructuring? true)
-                            new-bindings)]
-         (process-forms body new-bindings trace-ctx))
-
-       (#{'do 'try 'catch 'finally} (first form))
-       (process-forms (rest form) bindings trace-ctx)
-
-       (= 'with-redefs (first form))
-       (process-forms (drop 2 form) bindings trace-ctx)
-
-       (= 'doseq (first form))
-       (process-doseq form bindings trace-ctx)
-
-       (= 'fn (first form))
-       (process-forms (drop 2 form) bindings trace-ctx)
-
-       :else
-       (or (process-fn-invoke form bindings trace-ctx)
-           (let [parsed (assertions/parse-assertion form)]
-             (if parsed
-               (let [{:keys [asserted-form reason]} parsed]
-                 (if reason
-                   [(questionable-result form reason)]
-                   [(assertion-result asserted-form bindings trace-ctx)]))
-               (process-forms (rest form) bindings trace-ctx))))))
-   forms))
+  (:results (process-forms-sequential forms bindings trace-ctx nil)))
 
 (defn- test-verdict [results]
   (cond

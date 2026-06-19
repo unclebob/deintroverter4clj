@@ -62,6 +62,15 @@
     (is (= 1 (count findings)))
     (is (= :extroverted (:verdict (first findings))))))
 
+(deftest classifies-should-greater-than-as-extroverted
+  (is (= :extroverted (:verdict (first (analyze "speclj_should_gt.clj"
+                                                 'myapp.should-gt-spec #{'myapp.core}))))))
+
+(deftest classifies-stub-assertions-from-preceding-sut-call
+  (let [findings (analyze "speclj_stub_assertions.clj" 'myapp.stub-assertions-spec #{'myapp.core})]
+    (is (= 2 (count findings)))
+    (is (every? #(= :extroverted (:verdict %)) findings))))
+
 (deftest edn-findings-include-assertion-trace
   (let [{:keys [trace]} (first (analyze "extroverted_direct.clj"
                                         'myapp.core-test #{'myapp.core}))]

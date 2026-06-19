@@ -151,7 +151,7 @@ Unsupported forms are marked questionable: destructuring in `let`, anonymous fns
 
 **clojure.test:** `is`, `are`
 
-**Speclj:** `should`, `should=`, `should==`, `should-not`, `should-be`, `should-not-be`, `should-be-nil`, `should-not-be-nil`, `should-contain`, `should-be-a`, `should-throw`, `should-not-throw`, `should-throw?`, `should-not-throw?`
+**Speclj:** `should`, `should=`, `should==`, `should>`, `should-not`, `should-be`, `should-not-be`, `should-be-nil`, `should-not-be-nil`, `should-contain`, `should-be-a`, `should-throw`, `should-not-throw`, `should-throw?`, `should-not-throw?`, `should-have-invoked`, `should-not-have-invoked` (stub macros trace the immediately preceding SUT call in the same body)
 
 ## Development
 

@@ -37,6 +37,21 @@
          (:asserted-form (assertions/parse-assertion
                           '(should-throw clojure.lang.ExceptionInfo (myapp.core/run-job x)))))))
 
+(deftest recognizes-should-greater-than
+  (is (= :should> (:macro (assertions/parse-assertion '(should> (count xs) 0)))))
+  (is (= '(count xs)
+         (:asserted-form (assertions/parse-assertion '(should> (count xs) 0))))))
+
+(deftest recognizes-stub-invocation-macros
+  (is (= :should-have-invoked
+         (:macro (assertions/parse-assertion
+                  '(should-have-invoked :send-message {:with [:a 1]})))))
+  (is (= :should-not-have-invoked
+         (:macro (assertions/parse-assertion '(should-not-have-invoked :send-message)))))
+  (is (assertions/stub-invocation?
+       (assertions/parse-assertion '(should-have-invoked :x))))
+  (is (nil? (:asserted-form (assertions/parse-assertion '(should-have-invoked :x))))))
+
 (deftest unknown-assertion-like-macro-is-questionable
   (is (= :unknown-assertion-macro
          (:reason (assertions/parse-assertion '(assert-custom x)))))

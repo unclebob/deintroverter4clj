@@ -166,6 +166,12 @@
    (keep #(sut-var-ref-level (second %) bindings ctx)
          (collect-derefs form))))
 
+(defn direct-sut-invoke-form?
+  "True when the outermost list form is a direct call to a SUT function.
+  Unlike trace-form, does not search nested calls inside arguments."
+  [form ctx]
+  (boolean (call-sut-level form ctx)))
+
 (defn trace-form
   "Trace a form to determine assertion verdict.
   bindings: map of symbol → originating form from let, plus optional

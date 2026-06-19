@@ -11,7 +11,15 @@
     should-contain :should-contain
     should-be-a :should-be-a
     should-be-nil :should-be-nil
-    should-not-be-nil :should-not-be-nil})
+    should-not-be-nil :should-not-be-nil
+    should> :should>
+    should-have-invoked :should-have-invoked
+    should-not-have-invoked :should-not-have-invoked})
+
+(defn stub-invocation?
+  "True when the parsed assertion checks a Speclj stub invocation."
+  [{:keys [macro]}]
+  (contains? #{:should-have-invoked :should-not-have-invoked} macro))
 
 (defn- unquote [form]
   (if (and (seq? form) (= 'quote (first form)))
@@ -68,6 +76,12 @@
         {:macro kw
          :asserted-form (if (< 1 (count args)) (second args) (first args))
          :reason nil}
+
+        (= :should> kw)
+        {:macro :should> :asserted-form (first args) :reason nil}
+
+        (stub-invocation? {:macro kw})
+        {:macro kw :asserted-form nil :reason nil}
 
         (#{:should-be :should-not-be :should-be-nil :should-not-be-nil} kw)
         {:macro kw :asserted-form (first args) :reason nil}
