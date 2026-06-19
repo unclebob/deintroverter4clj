@@ -30,7 +30,12 @@
   (is (= '(myapp.core/foo)
          (:asserted-form (assertions/parse-assertion '(should-not-throw (myapp.core/foo))))))
   (is (= :should-throw
-         (:macro (assertions/parse-assertion '(should-throw Exception (myapp.core/foo)))))))
+         (:macro (assertions/parse-assertion '(should-throw Exception (myapp.core/foo))))))
+  (is (= '(myapp.core/foo)
+         (:asserted-form (assertions/parse-assertion '(should-throw Exception (myapp.core/foo))))))
+  (is (= '(myapp.core/mutate x)
+         (:asserted-form (assertions/parse-assertion
+                          '(should-throw clojure.lang.ExceptionInfo (myapp.core/mutate x)))))))
 
 (deftest unknown-macro-is-questionable
   (is (= :unknown-assertion-macro

@@ -35,6 +35,9 @@
 (defn- asserted-from-should-be-a [args]
   (first args))
 
+(defn- asserted-from-throw [args]
+  (last args))
+
 (defn parse-assertion
   "Returns {:macro keyword|:nil :asserted-form form|:nil :reason keyword|:nil}"
   [form]
@@ -61,7 +64,7 @@
         {:macro kw :asserted-form (first args) :reason nil}
 
         (#{:should-throw? :should-not-throw? :should-throw :should-not-throw} kw)
-        {:macro kw :asserted-form (second form) :reason nil}
+        {:macro kw :asserted-form (asserted-from-throw args) :reason nil}
 
         (= :should kw)
         {:macro :should :asserted-form (asserted-from-should args) :reason nil}
