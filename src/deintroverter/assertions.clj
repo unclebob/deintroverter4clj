@@ -6,6 +6,7 @@
     should-be :should-be should-not :should-not
     should-not-be :should-not-be
     should-throw? :should-throw? should-not-throw? :should-not-throw?
+    should-throw :should-throw should-not-throw :should-not-throw
     should :should
     should-contain :should-contain
     should-be-a :should-be-a})
@@ -57,7 +58,7 @@
         (#{:should-be :should-not-be} kw)
         {:macro kw :asserted-form (first args) :reason nil}
 
-        (#{:should-throw? :should-not-throw?} kw)
+        (#{:should-throw? :should-not-throw? :should-throw :should-not-throw} kw)
         {:macro kw :asserted-form (second form) :reason nil}
 
         (= :should kw)

@@ -31,3 +31,8 @@
 (deftest classifies-questionable-destructure
   (is (= :questionable (:verdict (first (analyze "questionable_destructure.clj"
                                                   'myapp.core-test #{'myapp.core}))))))
+
+(deftest classifies-speclj-wrappers-as-extroverted
+  (let [findings (analyze "speclj_wrappers.clj" 'myapp.wrapper-spec #{'myapp.core})]
+    (is (= 3 (count findings)))
+    (is (every? #(= :extroverted (:verdict %)) findings))))

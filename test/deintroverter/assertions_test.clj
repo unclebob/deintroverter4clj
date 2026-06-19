@@ -18,6 +18,14 @@
   (is (= 'actual
          (:asserted-form (assertions/parse-assertion '(should-be-a actual String))))))
 
+(deftest recognizes-speclj-throw-macros
+  (is (= :should-not-throw
+         (:macro (assertions/parse-assertion '(should-not-throw (myapp.core/foo))))))
+  (is (= '(myapp.core/foo)
+         (:asserted-form (assertions/parse-assertion '(should-not-throw (myapp.core/foo))))))
+  (is (= :should-throw
+         (:macro (assertions/parse-assertion '(should-throw Exception (myapp.core/foo)))))))
+
 (deftest unknown-macro-is-questionable
   (is (= :unknown-assertion-macro
          (:reason (assertions/parse-assertion '(assert-custom x))))))

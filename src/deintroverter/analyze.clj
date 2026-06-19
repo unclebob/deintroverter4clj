@@ -59,6 +59,9 @@
        (#{'do 'try 'catch 'finally} (first form))
        (process-forms (rest form) bindings trace-ctx)
 
+       (#{'with-redefs 'doseq} (first form))
+       (process-forms (drop 2 form) bindings trace-ctx)
+
        :else
        (let [parsed (assertions/parse-assertion form)]
          (if parsed
