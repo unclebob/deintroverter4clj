@@ -37,6 +37,7 @@ bb -m deintroverter.core --verbose spec/
 
 | Option | Description |
 |--------|-------------|
+| `-h`, `--help` | Print usage and exit |
 | `--format edn` | Print structured EDN instead of human-readable lines |
 | `--verbose` | Include extroverted and likely-extroverted tests in human output |
 | `--project-root <path>` | Project root for `deps.edn` discovery and in-project namespace boundaries |

@@ -7,14 +7,35 @@
             [deintroverter.parse :as parse])
   (:gen-class))
 
+(def usage
+  "deintroverter — classify Clojure/Speclj tests by SUT grounding
+
+Usage:
+  bb -m deintroverter.core [options] <paths...>
+
+Options:
+  -h, --help              Print this help and exit
+  --format edn            Structured EDN output (default: human)
+  --verbose               Show extroverted and likely-extroverted tests
+  --project-root <path>   Project root for deps.edn discovery
+  --sut-ns <namespace>    Add a namespace to the SUT set
+  --exclude-ns <namespace>  Remove a namespace from the SUT set
+
+Exit code 0 when no introverted, questionable, or parse errors; 1 otherwise.")
+
+(defn print-usage []
+  (println usage))
+
 (defn- parse-args [args]
-  (loop [m    {:format :human :verbose false :add-sut #{} :remove-sut #{}
+  (loop [m    {:help false :format :human :verbose false :add-sut #{} :remove-sut #{}
                :project-root nil :paths []}
          args args]
     (if (empty? args)
       m
       (let [a (first args)]
         (cond
+          (#{"--help" "-h"} a)   (recur (assoc m :help true) (rest args))
+
           (= "--format" a)      (recur (assoc m :format (keyword (second args)))
                                       (drop 2 args))
           (= "--verbose" a)      (recur (assoc m :verbose true) (rest args))
@@ -28,8 +49,10 @@
           :else                  (recur (update m :paths conj a) (rest args)))))))
 
 (defn run!
-  [{:keys [paths project-root format verbose add-sut remove-sut]}]
-  (let [files (paths/collect-files paths)
+  [{:keys [help paths project-root format verbose add-sut remove-sut]}]
+  (if help
+    (do (print-usage) {:exit 0 :findings [] :errors []})
+    (let [files (paths/collect-files paths)
         root  (or project-root
                   (some #(project/find-project-root (.getPath %)) files))
         ctx   (when root (project/load-context root))
@@ -59,10 +82,10 @@
          {:findings [] :errors []}
          files)
         exit (report/exit-code findings errors)]
-    (case format
-      :edn (report/print-edn root findings errors)
-      (report/print-human findings verbose))
-    {:exit exit :findings findings :errors errors}))
+      (case format
+        :edn (report/print-edn root findings errors)
+        (report/print-human findings verbose))
+      {:exit exit :findings findings :errors errors})))
 
 (defn -main [& args]
   (let [{:keys [exit]} (run! (parse-args args))]

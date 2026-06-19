@@ -30,6 +30,16 @@
                                                           :format :human
                                                           :verbose false)))))))
 
+(deftest help-prints-usage-and-exits-zero
+  (let [out (with-out-str (core/run! {:help true :paths [] :format :human
+                                      :verbose false :add-sut #{} :remove-sut #{}
+                                      :project-root nil}))]
+    (is (= 0 (:exit (core/run! {:help true :paths [] :format :human
+                                :verbose false :add-sut #{} :remove-sut #{}
+                                :project-root nil}))))
+    (is (str/includes? out "deintroverter"))
+    (is (str/includes? out "--format edn"))))
+
 (deftest cli-edn-format
   (is (str/includes?
        (with-out-str (core/run! (assoc run-opts-base
