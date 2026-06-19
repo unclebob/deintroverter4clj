@@ -33,6 +33,21 @@
   (is (= 0 (report/exit-code [{:verdict :questionable}] [])))
   (is (= 0 (report/exit-code [] [{:type :parse-error}]))))
 
+(deftest summary-groups-conditional-assertions-by-reason
+  (let [findings [{:verdict :conditional-assertion :reason :would-be-extroverted}
+                  {:verdict :conditional-assertion :reason :would-be-extroverted}
+                  {:verdict :conditional-assertion :reason :no-sut-assertion}]
+        summary (:summary (report/build-edn "/proj" findings []))]
+    (is (= {:total 3 :would-be-extroverted 2 :no-sut-assertion 1}
+           (:conditional-assertion summary)))))
+
+(deftest human-output-shows-conditional-assertions
+  (let [findings [{:file "t.clj" :line 10 :test-name "maybe" :test-form :it
+                   :verdict :conditional-assertion :reason :would-be-extroverted}]]
+    (is (str/includes?
+         (with-out-str (report/print-human findings false))
+         ":conditional-assertion"))))
+
 (deftest summary-groups-questionable-and-introverted-by-reason
   (let [findings (concat sample-findings
                          [{:verdict :questionable :reason :unknown-assertion-macro}

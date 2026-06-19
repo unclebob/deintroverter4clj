@@ -38,6 +38,28 @@
                                                         'myapp.cloistered-spec
                                                         #{'myapp.core}))))))
 
+(deftest classifies-stamping-negative-assertions-not-questionable
+  (let [findings (analyze "empire_stamping_negative.clj" 'myapp.stamping-negative-spec #{})]
+    (is (= 1 (count findings)))
+    (is (= :introverted (:verdict (first findings))))))
+
+(deftest classifies-pipeline-assert-failure-helper
+  (let [findings (analyze "pipeline_assert_failure.clj" 'myapp.pipeline-assert-failure-spec #{})]
+    (is (= 1 (count findings)))
+    (is (not= :questionable (:verdict (first findings))))))
+
+(deftest classifies-sut-side-effect-as-likely-extroverted
+  (let [findings (analyze "side_effect_helpers.clj" 'myapp.side-effect-spec #{'myapp.core})]
+    (is (= 3 (count findings)))
+    (is (= :likely-extroverted (:verdict (first findings))))
+    (is (= :sut-side-effect-heuristic (:reason (first findings))))
+    (is (= :immediate-preceding-sut
+           (get-in (first findings) [:trace :assertions 0 :side-effect-evidence])))
+    (is (= :likely-extroverted (:verdict (second findings))))
+    (is (= :test-state-binding
+           (get-in (second findings) [:trace :assertions 0 :side-effect-evidence])))
+    (is (= :cloistered (:verdict (nth findings 2))))))
+
 (deftest classifies-cloistered-via-alias-extra-paths
   (is (= :cloistered (:verdict (first (analyze "cloistered_spec_mother.clj"
                                                 'myapp.spec-mother-spec
@@ -57,15 +79,27 @@
                                                  'myapp.destructure-rest-test
                                                  #{'myapp.core}))))))
 
-(deftest classifies-questionable-nested-destructure
-  (is (= :questionable (:verdict (first (analyze "questionable_nested_destructure.clj"
-                                                  'myapp.nested-destructure-test
-                                                  #{'myapp.core}))))))
+(deftest classifies-extroverted-nested-destructure
+  (is (= :extroverted (:verdict (first (analyze "questionable_nested_destructure.clj"
+                                                 'myapp.nested-destructure-test
+                                                 #{'myapp.core}))))))
+
+(deftest classifies-extroverted-symbol-key-map-destructure
+  (is (= :extroverted (:verdict (first (analyze "extroverted_destructure_symbol_keys.clj"
+                                                 'myapp.destructure-symbol-keys-test
+                                                 #{'myapp.core}))))))
+
+(deftest classifies-extroverted-nested-vector-pairs-destructure
+  (is (= :extroverted (:verdict (first (analyze "extroverted_destructure_nested_vectors.clj"
+                                                 'myapp.destructure-nested-vectors-test
+                                                 #{'myapp.core}))))))
 
 (deftest classifies-speclj-wrappers-as-extroverted
   (let [findings (analyze "speclj_wrappers.clj" 'myapp.wrapper-spec #{'myapp.core})]
     (is (= 3 (count findings)))
-    (is (every? #(= :extroverted (:verdict %)) findings))))
+    (is (= :extroverted (:verdict (first findings))))
+    (is (= :conditional-assertion (:verdict (second findings))))
+    (is (= :extroverted (:verdict (nth findings 2))))))
 
 (deftest classifies-through-setup-forms
   (let [findings (analyze "speclj_setup.clj" 'myapp.setup-spec #{'myapp.core})]
@@ -75,7 +109,8 @@
 (deftest classifies-invoked-fn-literal-assertions
   (let [findings (analyze "speclj_fn_assertions.clj" 'myapp.fn-assertions-spec #{'myapp.core})]
     (is (= 1 (count findings)))
-    (is (= :extroverted (:verdict (first findings))))))
+    (is (= :conditional-assertion (:verdict (first findings))))
+    (is (= :would-be-extroverted (:reason (first findings))))))
 
 (deftest classifies-should-greater-than-as-extroverted
   (is (= :extroverted (:verdict (first (analyze "speclj_should_gt.clj"
@@ -85,6 +120,33 @@
   (let [findings (analyze "speclj_stub_assertions.clj" 'myapp.stub-assertions-spec #{'myapp.core})]
     (is (= 2 (count findings)))
     (is (every? #(= :extroverted (:verdict %)) findings))))
+
+(deftest classifies-assertions-inside-conditionals
+  (let [findings (analyze "conditional_assertions.clj"
+                          'myapp.conditional-spec
+                          #{'myapp.core})]
+    (is (= 5 (count findings)))
+    (is (every? #(pos? (count (get-in % [:trace :assertions]))) findings))
+    (is (every? #(= :conditional-assertion (:verdict %)) findings))
+    (is (every? #(:conditional? (first (get-in % [:trace :assertions]))) findings))
+    (is (= :would-be-extroverted (:reason (first findings))))))
+
+(deftest classifies-when-body-with-refer-all-sut
+  (let [findings (analyze "coastline_when_empire_body.clj"
+                          'myapp.coastline-when-empire-body-spec
+                          #{'myapp.core 'myapp.helpers-test})]
+    (is (= 1 (count findings)))
+    (is (= :conditional-assertion (:verdict (first findings))))
+    (is (= :would-be-likely-extroverted (:reason (first findings))))
+    (is (= 2 (count (get-in (first findings) [:trace :assertions]))))))
+
+(deftest unconditional-assertion-outranks-conditional
+  (let [{:keys [trace]} (first (analyze "conditional_mixed.clj"
+                                        'myapp.conditional-mixed-spec
+                                        #{'myapp.core}))]
+    (is (= :extroverted (:verdict (first (:assertions trace)))))
+    (is (true? (:conditional? (second (:assertions trace)))))
+    (is (= :extroverted (:underlying-verdict (second (:assertions trace)))))))
 
 (deftest edn-findings-include-assertion-trace
   (let [{:keys [trace]} (first (analyze "extroverted_direct.clj"

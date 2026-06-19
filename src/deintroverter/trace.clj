@@ -68,11 +68,29 @@
      :resolved-ns (resolved-ns-for-sym sym ctx)
      :level (or (call-sut-level form ctx) :none)}))
 
-(defn- collect-calls [form]
+(defn- form-children [node]
   (cond
-    (not (seq? form)) #{}
-    (invoke-form? form) (into #{form} (mapcat collect-calls (rest form)))
-    :else               (into #{} (mapcat collect-calls form))))
+    (seq? node) (seq node)
+    (coll? node) (seq node)
+    :else nil))
+
+(defn- push-children [stack children]
+  (if-let [xs (seq children)]
+    (into stack (reverse (vec xs)))
+    stack))
+
+(defn- collect-calls [form]
+  (loop [stack [form] calls #{}]
+    (if (empty? stack)
+      calls
+      (let [node (peek stack)
+            stack (pop stack)]
+        (if-not (seq? node)
+          (recur stack calls)
+          (if (invoke-form? node)
+            (recur (push-children stack (rest node))
+                   (conj calls node))
+            (recur (push-children stack (seq node)) calls)))))))
 
 (defn- desugar-> [forms]
   (loop [value (second forms) steps (drop 2 forms)]
@@ -96,10 +114,11 @@
                (rest steps))))))
 
 (defn- expand-threading [form]
-  (cond
-    (and (seq? form) (= '-> (first form)))  (expand-threading (desugar-> form))
-    (and (seq? form) (= '->> (first form))) (expand-threading (desugar->> form))
-    :else form))
+  (loop [f form]
+    (cond
+      (and (seq? f) (= '-> (first f)))  (recur (desugar-> f))
+      (and (seq? f) (= '->> (first f))) (recur (desugar->> f))
+      :else f)))
 
 (defn- binding-destructuring? [binding]
   (or (and (vector? binding) (some (complement symbol?) binding))
@@ -118,11 +137,13 @@
 (declare trace-form)
 
 (defn- symbols-in-form [form]
-  (cond
-    (symbol? form) #{form}
-    (seq? form)    (into #{} (mapcat symbols-in-form form))
-    (coll? form)   (into #{} (mapcat symbols-in-form form))
-    :else #{}))
+  (loop [stack [form] syms #{}]
+    (if (empty? stack)
+      syms
+      (let [node (peek stack)
+            stack (pop stack)]
+        (recur (push-children stack (form-children node))
+               (if (symbol? node) (conj syms node) syms))))))
 
 (defn- binding-origin-level [sym bindings ctx]
   (case (:verdict (trace-form (get bindings sym) bindings ctx))
@@ -140,10 +161,17 @@
        (symbol? (second form))))
 
 (defn- collect-derefs [form]
-  (cond
-    (not (seq? form)) #{}
-    (deref-form? form)  (into #{form} (mapcat collect-derefs (rest form)))
-    :else               (into #{} (mapcat collect-derefs form))))
+  (loop [stack [form] derefs #{}]
+    (if (empty? stack)
+      derefs
+      (let [node (peek stack)
+            stack (pop stack)]
+        (if-not (seq? node)
+          (recur stack derefs)
+          (if (deref-form? node)
+            (recur (push-children stack (rest node))
+                   (conj derefs node))
+            (recur (push-children stack (seq node)) derefs)))))))
 
 (defn- sut-var-ref-level [sym bindings {:keys [sut refer-syms] :as ctx}]
   (when (and (symbol? sym) (not (contains? bindings sym)))
@@ -196,11 +224,43 @@
                          (test-module-var-ref-levels expanded bindings ctx))]
     (boolean (some #{:proven} levels))))
 
+(defn binding-from-test-module?
+  "True when any let-bound symbol originates from a test-module form."
+  [bindings ctx]
+  (boolean
+   (some (fn [[k origin]]
+           (and (symbol? k)
+                (reaches-test-module? origin bindings ctx)))
+         bindings)))
+
+(defn- sut-reach-levels [form bindings ctx]
+  (let [expanded (expand-threading form)
+        calls    (collect-calls expanded)]
+    (concat (keep #(call-sut-level % ctx) calls)
+            (sut-var-ref-levels expanded bindings ctx)
+            (binding-origin-levels expanded bindings ctx))))
+
+(defn reaches-sut?
+  "True when form calls or references a SUT namespace at :proven level."
+  [form bindings ctx]
+  (boolean (some #{:proven} (sut-reach-levels form bindings ctx))))
+
+(defn reaches-sut-likely?
+  "True when form reaches SUT at :proven or :likely (refer :all) level."
+  [form bindings ctx]
+  (boolean (some #{:proven :likely} (sut-reach-levels form bindings ctx))))
+
 (defn direct-sut-invoke-form?
   "True when the outermost list form is a direct call to a SUT function.
   Unlike trace-form, does not search nested calls inside arguments."
   [form ctx]
   (boolean (call-sut-level form ctx)))
+
+(defn- resolve-bound-form [form bindings]
+  (loop [f form seen #{}]
+    (if (and (symbol? f) (contains? bindings f) (not (contains? seen f)))
+      (recur (get bindings f) (conj seen f))
+      f)))
 
 (defn trace-form
   "Trace a form to determine assertion verdict.
@@ -210,10 +270,8 @@
   Returns {:verdict :extroverted|:likely-extroverted|:introverted|:questionable
            :reason keyword-or-nil}"
   [form bindings ctx]
-  (cond
-    (and (symbol? form) (contains? bindings form))
-    (trace-form (get bindings form) bindings ctx)
-
+  (let [form (resolve-bound-form form bindings)]
+    (cond
     (and (seq? form) (#{'as-> 'some-> 'some->> 'cond->} (first form)))
     {:verdict :questionable :reason :unsupported-threading-macro}
 
@@ -229,7 +287,7 @@
       (or (levels->verdict levels)
           (when (bindings-have-destructuring? bindings)
             {:verdict :questionable :reason :destructuring})
-          {:verdict :introverted :reason :no-sut-assertion}))))
+          {:verdict :introverted :reason :no-sut-assertion})))))
 
 (defn explain-trace
   "Return trace detail for a form: asserted calls, binding origins, and verdict.

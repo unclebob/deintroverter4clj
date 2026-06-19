@@ -35,7 +35,7 @@ bb -m deintroverter.core --verbose spec/
 
 ### Stack depth on large projects
 
-Deeply nested test bodies (common in large Speclj suites) can exhaust Babashka's default JVM stack and fail with `StackOverflowError`. Increase the stack size with `BB_JVM_OPTS`:
+Form walking and tracing use iterative stacks (not recursive descent), so most projects run on Babashka's default JVM stack. Very large single files or extreme nesting can still hit `StackOverflowError` — increase the stack size with `BB_JVM_OPTS`:
 
 ```bash
 BB_JVM_OPTS="-Xss32m" bb -m deintroverter.core --project-root ../my-app spec/
@@ -43,7 +43,7 @@ BB_JVM_OPTS="-Xss32m" bb -m deintroverter.core --project-root ../my-app spec/
 
 Start with `32m`; if errors persist, try `64m`.
 
-**Full-directory scans.** Even with a larger stack, pointing deintroverter at a large `spec/` tree in one invocation can still overflow — analysis is recursive and stack use accumulates across files in a single process. If a whole-directory scan fails, scan subdirectories or individual files instead:
+**Full-directory scans.** If a whole-directory scan still fails, scan subdirectories or individual files instead:
 
 ```bash
 BB_JVM_OPTS="-Xss32m" bb -m deintroverter.core --project-root ../my-app spec/my_app/game_logic/

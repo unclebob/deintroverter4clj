@@ -11,11 +11,12 @@
                  (group-by :reason matched))))))
 
 (defn- summarize [findings]
-  {:extroverted        (count (filter #(= :extroverted (:verdict %)) findings))
-   :likely-extroverted (count (filter #(= :likely-extroverted (:verdict %)) findings))
-   :cloistered         (summarize-by-reason findings :cloistered)
-   :introverted        (summarize-by-reason findings :introverted)
-   :questionable       (summarize-by-reason findings :questionable)})
+  {:extroverted            (count (filter #(= :extroverted (:verdict %)) findings))
+   :likely-extroverted     (count (filter #(= :likely-extroverted (:verdict %)) findings))
+   :conditional-assertion  (summarize-by-reason findings :conditional-assertion)
+   :cloistered             (summarize-by-reason findings :cloistered)
+   :introverted            (summarize-by-reason findings :introverted)
+   :questionable           (summarize-by-reason findings :questionable)})
 
 (defn- report-by-default? [verdict verbose?]
   (or verbose?

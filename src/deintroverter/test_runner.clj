@@ -7,6 +7,7 @@
             deintroverter.sut-test
             deintroverter.test-modules-test
             deintroverter.trace-test
+            deintroverter.stack-depth-test
             deintroverter.assertions-test
             deintroverter.analyze-test
             deintroverter.report-test
@@ -21,6 +22,7 @@
     deintroverter.sut-test
     deintroverter.test-modules-test
     deintroverter.trace-test
+    deintroverter.stack-depth-test
     deintroverter.assertions-test
     deintroverter.analyze-test
     deintroverter.report-test

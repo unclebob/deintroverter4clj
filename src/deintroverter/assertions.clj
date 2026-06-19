@@ -2,13 +2,15 @@
 
 (def ^:private known
   '{is :is are :are
-    should= :should= should== :should==
+    should= :should= should== :should== should-not= :should-not=
     should-be :should-be should-not :should-not
     should-not-be :should-not-be
     should-throw? :should-throw? should-not-throw? :should-not-throw?
     should-throw :should-throw should-not-throw :should-not-throw
     should :should
     should-contain :should-contain
+    should-not-contain :should-not-contain
+    should-fail :should-fail
     should-be-a :should-be-a
     should-be-nil :should-be-nil
     should-not-be-nil :should-not-be-nil
@@ -72,7 +74,7 @@
         (= :are kw)
         {:macro :are :asserted-form (second form) :reason nil}
 
-        (#{:should= :should== :should-not} kw)
+        (#{:should= :should== :should-not :should-not=} kw)
         {:macro kw
          :asserted-form (if (< 1 (count args)) (second args) (first args))
          :reason nil}
@@ -95,6 +97,16 @@
         (= :should-contain kw)
         {:macro :should-contain
          :asserted-form (asserted-from-should-contain args)
+         :reason nil}
+
+        (= :should-not-contain kw)
+        {:macro :should-not-contain
+         :asserted-form (asserted-from-should-contain args)
+         :reason nil}
+
+        (= :should-fail kw)
+        {:macro :should-fail
+         :asserted-form (first args)
          :reason nil}
 
         (= :should-be-a kw)

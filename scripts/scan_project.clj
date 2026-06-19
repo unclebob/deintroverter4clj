@@ -1,4 +1,7 @@
 #!/usr/bin/env bb
+(require '[babashka.classpath :refer [add-classpath]])
+(add-classpath (str (System/getProperty "user.dir") "/scripts"))
+
 (require '[clojure.edn :as edn]
          '[clojure.java.io :as io]
          '[clojure.string :as str]
@@ -6,17 +9,15 @@
          '[deintroverter.project :as project]
          '[deintroverter.report :as report]
          '[deintroverter.sut :as sut]
-         '[deintroverter.parse :as parse])
+         '[deintroverter.parse :as parse]
+         '[scan-common :as scan])
 
 (def project-root
   (or (System/getenv "PROJECT_ROOT")
       (throw (ex-info "Set PROJECT_ROOT" {}))))
 
-(defn ns-from-file [^java.io.File f]
-  (try (some-> f slurp read-string second) (catch Throwable _ nil)))
-
 (defn- skip-dir? [^java.io.File dir]
-  (#{".git" ".worktrees" "node_modules" "target"} (.getName dir)))
+  (scan/skip-directory? dir))
 
 (defn- walk-files [^java.io.File dir]
   (when (.exists dir)
@@ -25,19 +26,11 @@
       (when-not (skip-dir? dir)
         (mapcat walk-files (.listFiles dir))))))
 
-(defn spec-file? [^java.io.File f]
-  (and (.isFile f)
-       (let [n (.getName f)]
-         (or (.endsWith n "_spec.clj")
-             (.endsWith n "_test.clj")))))
-
 (defn- deps-edn []
   (edn/read-string (slurp (io/file project-root "deps.edn"))))
 
 (defn- scan-path-entries []
-  (let [deps (deps-edn)
-        extra (mapcat (fn [[_ a]] (or (:extra-paths a) [])) (:aliases deps))]
-    (vec (distinct (concat (or (:paths deps) ["src"]) extra)))))
+  (scan/scan-path-entries (deps-edn)))
 
 (defn- discover-spec-files []
   (vec
@@ -46,17 +39,8 @@
           :let [dir (io/file project-root entry)]
           :when (.exists dir)
           f (walk-files dir)
-          :when (spec-file? f)]
+          :when (scan/spec-test-file? f)]
       (.getPath f)))))
-
-(defn- discover-sut-namespaces []
-  (into #{}
-        (keep ns-from-file
-              (filter #(let [n (.getName %)]
-                         (or (.endsWith n ".clj")
-                             (.endsWith n ".cljs")
-                             (.endsWith n ".cljc")))
-                      (file-seq (io/file project-root "src"))))))
 
 (defn- analyze-file [path project-ctx sut-ns]
   (try
@@ -75,9 +59,9 @@
       {:findings []
        :errors [{:type :scan-error :file path :message (or (.getMessage e) (str (class e)))}]})))
 
-(let [spec-files   (discover-spec-files)
-      sut-ns       (discover-sut-namespaces)
-      project-ctx  (project/load-context project-root)]
+(let [project-ctx  (project/load-context project-root)
+      spec-files   (discover-spec-files)
+      sut-ns       (scan/discover-sut-namespaces project-root project-ctx)]
   (println "project:" project-root)
   (println "paths:" (scan-path-entries))
   (println "scanning" (count spec-files) "spec files," (count sut-ns) "SUT namespaces")

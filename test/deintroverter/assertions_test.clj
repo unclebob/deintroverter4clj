@@ -18,6 +18,18 @@
   (is (= 'actual
          (:asserted-form (assertions/parse-assertion '(should-be-a actual String))))))
 
+(deftest recognizes-should-not-contain
+  (is (= :should-not-contain
+         (:macro (assertions/parse-assertion '(should-not-contain :key m)))))
+  (is (= 'm (:asserted-form (assertions/parse-assertion '(should-not-contain :key m)))))
+  (is (= 'items
+         (:asserted-form (assertions/parse-assertion '(should-not-contain [1 1] items))))))
+
+(deftest recognizes-should-fail
+  (is (= :should-fail (:macro (assertions/parse-assertion '(should-fail "expected exception")))))
+  (is (= "expected exception"
+         (:asserted-form (assertions/parse-assertion '(should-fail "expected exception"))))))
+
 (deftest recognizes-should-not-be-nil
   (is (= :should-not-be-nil
          (:macro (assertions/parse-assertion '(should-not-be-nil (:line site))))))
