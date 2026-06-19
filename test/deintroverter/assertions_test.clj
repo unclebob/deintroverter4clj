@@ -18,6 +18,12 @@
   (is (= 'actual
          (:asserted-form (assertions/parse-assertion '(should-be-a actual String))))))
 
+(deftest recognizes-should-not-be-nil
+  (is (= :should-not-be-nil
+         (:macro (assertions/parse-assertion '(should-not-be-nil (:line site))))))
+  (is (= '(:line site)
+         (:asserted-form (assertions/parse-assertion '(should-not-be-nil (:line site)))))))
+
 (deftest recognizes-speclj-throw-macros
   (is (= :should-not-throw
          (:macro (assertions/parse-assertion '(should-not-throw (myapp.core/foo))))))

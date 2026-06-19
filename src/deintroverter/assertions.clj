@@ -9,7 +9,9 @@
     should-throw :should-throw should-not-throw :should-not-throw
     should :should
     should-contain :should-contain
-    should-be-a :should-be-a})
+    should-be-a :should-be-a
+    should-be-nil :should-be-nil
+    should-not-be-nil :should-not-be-nil})
 
 (defn- unquote [form]
   (if (and (seq? form) (= 'quote (first form)))
@@ -55,7 +57,7 @@
          :asserted-form (if (< 1 (count args)) (second args) (first args))
          :reason nil}
 
-        (#{:should-be :should-not-be} kw)
+        (#{:should-be :should-not-be :should-be-nil :should-not-be-nil} kw)
         {:macro kw :asserted-form (first args) :reason nil}
 
         (#{:should-throw? :should-not-throw? :should-throw :should-not-throw} kw)
