@@ -62,6 +62,9 @@
        (#{'with-redefs 'doseq} (first form))
        (process-forms (drop 2 form) bindings trace-ctx)
 
+       (= 'fn (first form))
+       (process-forms (drop 2 form) bindings trace-ctx)
+
        :else
        (let [parsed (assertions/parse-assertion form)]
          (if parsed

@@ -36,3 +36,8 @@
   (let [findings (analyze "speclj_wrappers.clj" 'myapp.wrapper-spec #{'myapp.core})]
     (is (= 3 (count findings)))
     (is (every? #(= :extroverted (:verdict %)) findings))))
+
+(deftest classifies-through-setup-forms
+  (let [findings (analyze "speclj_setup.clj" 'myapp.setup-spec #{'myapp.core})]
+    (is (= 2 (count findings)))
+    (is (every? #(= :extroverted (:verdict %)) findings))))

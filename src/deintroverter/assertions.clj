@@ -38,16 +38,25 @@
 (defn- asserted-from-throw [args]
   (last args))
 
+(defn- assertion-like? [sym]
+  (when (symbol? sym)
+    (let [n (name sym)]
+      (or (.startsWith n "should")
+          (.startsWith n "assert")
+          (.startsWith n "expect")))))
+
 (defn parse-assertion
-  "Returns {:macro keyword|:nil :asserted-form form|:nil :reason keyword|:nil}"
+  "Returns {:macro keyword|:nil :asserted-form form|:nil :reason keyword|:nil},
+  or nil when the form is not an assertion macro."
   [form]
-  (when (seq? form)
+  (when (and (seq? form) (symbol? (first form)))
     (let [mac (first form)
           kw  (get known mac)
           args (rest form)]
       (cond
         (nil? kw)
-        {:macro nil :asserted-form nil :reason :unknown-assertion-macro}
+        (when (assertion-like? mac)
+          {:macro nil :asserted-form nil :reason :unknown-assertion-macro})
 
         (= :is kw)
         {:macro :is :asserted-form (asserted-from-is (second form)) :reason nil}

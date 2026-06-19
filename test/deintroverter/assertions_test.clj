@@ -37,6 +37,13 @@
          (:asserted-form (assertions/parse-assertion
                           '(should-throw clojure.lang.ExceptionInfo (myapp.core/mutate x)))))))
 
-(deftest unknown-macro-is-questionable
+(deftest unknown-assertion-like-macro-is-questionable
   (is (= :unknown-assertion-macro
-         (:reason (assertions/parse-assertion '(assert-custom x))))))
+         (:reason (assertions/parse-assertion '(assert-custom x)))))
+  (is (= :unknown-assertion-macro
+         (:reason (assertions/parse-assertion '(should-unknown x))))))
+
+(deftest non-assertion-forms-return-nil
+  (is (nil? (assertions/parse-assertion '(with-temp-source-path (fn [])))))
+  (is (nil? (assertions/parse-assertion '(myapp.core/foo x))))
+  (is (nil? (assertions/parse-assertion '((var myapp.core/foo) x)))))
