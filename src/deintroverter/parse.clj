@@ -8,7 +8,8 @@
                                     :fn true
                                     :regex true
                                     :var true
-                                    :deref true})))
+                                    :deref true
+                                    :quote true})))
 
 (defn- require-entry->ns-sym [entry]
   (cond

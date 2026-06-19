@@ -17,6 +17,10 @@
   (is (= 1 (count (parse/read-string-all "(def x #'foo.bar/baz)"))))
   (is (= 1 (count (parse/read-string-all "(def y @atom)")))))
 
+(deftest reads-quote-shorthand-in-map-literals
+  (is (= '{:parent (quote (+ 1 2))}
+         (first (parse/read-string-all "{:parent '(+ 1 2)}")))))
+
 (deftest parses-ns-requires-and-aliases
   (is (= 'myapp.core-test
          (:namespace (parse/parse-ns-form sample-ns-form))))
