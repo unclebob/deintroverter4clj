@@ -21,7 +21,7 @@ Options:
   --sut-ns <namespace>    Add a namespace to the SUT set
   --exclude-ns <namespace>  Remove a namespace from the SUT set
 
-Exit code 0 when no introverted, questionable, or parse errors; 1 otherwise.")
+Exit code is always 0; use the report for findings and errors.")
 
 (defn print-usage []
   (println usage))
@@ -71,7 +71,8 @@ Exit code 0 when no introverted, questionable, or parse errors; 1 otherwise.")
                                                       :external-dep-symbols #{}})
                              :add            add-sut
                              :remove         remove-sut})
-                   file-findings (analyze/analyze-file (.getPath f) {:sut sut})]
+                   file-findings (analyze/analyze-file (.getPath f)
+                                                       {:sut sut :project-ctx ctx})]
                {:findings (into findings file-findings)
                 :errors errors})
              (catch Exception e

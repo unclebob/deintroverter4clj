@@ -166,6 +166,36 @@
    (keep #(sut-var-ref-level (second %) bindings ctx)
          (collect-derefs form))))
 
+(defn- sym-test-module? [sym {:keys [test-modules] :as ctx}]
+  (when-let [ns-s (resolved-ns-for-sym sym ctx)]
+    (contains? test-modules (symbol ns-s))))
+
+(defn- test-module-call-level [form ctx]
+  (when-let [target (invoke-target-sym form)]
+    (when (sym-test-module? target ctx)
+      :proven)))
+
+(defn- test-module-var-ref-level [sym bindings ctx]
+  (when (and (symbol? sym) (not (contains? bindings sym)))
+    (when (sym-test-module? sym ctx)
+      :proven)))
+
+(defn- test-module-var-ref-levels [form bindings ctx]
+  (concat
+   (keep #(test-module-var-ref-level % bindings ctx)
+         (symbols-in-form form))
+   (keep #(test-module-var-ref-level (second %) bindings ctx)
+         (collect-derefs form))))
+
+(defn reaches-test-module?
+  "True when form (or do-body) calls or references a test-module namespace."
+  [form bindings ctx]
+  (let [expanded (expand-threading form)
+        calls    (collect-calls expanded)
+        levels   (concat (keep #(test-module-call-level % ctx) calls)
+                         (test-module-var-ref-levels expanded bindings ctx))]
+    (boolean (some #{:proven} levels))))
+
 (defn direct-sut-invoke-form?
   "True when the outermost list form is a direct call to a SUT function.
   Unlike trace-form, does not search nested calls inside arguments."
@@ -220,7 +250,7 @@
 
 (defn make-trace-ctx
   "Build trace context from ns-info and the SUT namespace set."
-  [{:keys [refer-syms refer-all] :as ns-info} sut resolve-ns]
+  [{:keys [refer-syms refer-all] :as ns-info} sut resolve-ns & [{:keys [test-modules]}]]
   (let [sut-refer-syms (into {}
                              (keep (fn [[sym ns]]
                                      (when (contains? sut ns)
@@ -233,5 +263,6 @@
      :all-refer-syms refer-syms
      :refer-all-sut refer-all-sut
      :core-syms (load-core-denylist)
+     :test-modules (or test-modules #{})
      :test-ns (:namespace ns-info)
      :requires (:requires ns-info)}))

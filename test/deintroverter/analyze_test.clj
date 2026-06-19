@@ -17,7 +17,9 @@
     :project-ctx project-ctx :add #{} :remove #{}}))
 
 (defn- analyze [file test-ns requires]
-  (analyze/analyze-file (fixture file) {:sut (sut-for test-ns requires)}))
+  (analyze/analyze-file (fixture file)
+                        {:sut (sut-for test-ns requires)
+                         :project-ctx project-ctx}))
 
 (deftest classifies-extroverted-deftest
   (is (= 1 (count (analyze "extroverted_direct.clj" 'myapp.core-test #{'myapp.core}))))
@@ -27,6 +29,14 @@
 (deftest classifies-introverted-deftest
   (is (= :introverted (:verdict (first (analyze "introverted_literal.clj"
                                                 'myapp.core-test #{}))))))
+
+(deftest classifies-cloistered-when-reaching-test-module
+  (is (= :cloistered (:verdict (first (analyze "cloistered_helpers.clj"
+                                                'myapp.cloistered-spec
+                                                #{'myapp.core})))))
+  (is (= :reaches-test-module (:reason (first (analyze "cloistered_helpers.clj"
+                                                        'myapp.cloistered-spec
+                                                        #{'myapp.core}))))))
 
 (deftest classifies-extroverted-vector-destructure
   (is (= :extroverted (:verdict (first (analyze "questionable_destructure.clj"

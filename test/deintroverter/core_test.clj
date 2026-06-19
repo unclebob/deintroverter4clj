@@ -16,7 +16,7 @@
   {:project-root sample-project :add-sut #{} :remove-sut #{}})
 
 (deftest cli-flags-introverted-fixture
-  (is (= 1 (:exit (core/run! (assoc run-opts-base
+  (is (= 0 (:exit (core/run! (assoc run-opts-base
                                     :paths [introverted-fixture]
                                     :format :human
                                     :verbose false)))))

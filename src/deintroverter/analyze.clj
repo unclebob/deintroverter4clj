@@ -1,6 +1,7 @@
 (ns deintroverter.analyze
   (:require [deintroverter.parse :as parse]
             [deintroverter.assertions :as assertions]
+            [deintroverter.test-modules :as test-modules]
             [deintroverter.trace :as trace]))
 
 (defn- resolve-ns-fn [{:keys [aliases]}]
@@ -290,6 +291,17 @@
 (defn- process-forms [forms bindings trace-ctx]
   (:results (process-forms-sequential forms bindings trace-ctx nil)))
 
+(defn- body-form [body]
+  (if (= 1 (count body))
+    (first body)
+    (cons 'do body)))
+
+(defn- promote-cloistered [verdict body bindings trace-ctx]
+  (if (and (= :introverted (:verdict verdict))
+           (trace/reaches-test-module? (body-form body) bindings trace-ctx))
+    {:verdict :cloistered :reason :reaches-test-module}
+    verdict))
+
 (defn- test-verdict [results]
   (cond
     (some #(= :extroverted (:verdict %)) results)
@@ -310,19 +322,29 @@
     {:verdict :introverted :reason :no-sut-assertion}))
 
 (defn analyze-file
-  "Analyze a test file path. opts: {:sut #{namespace-syms}}
+  "Analyze a test file path. opts: {:sut #{namespace-syms} :project-ctx map}
   Returns vector of finding maps."
-  [file-path {:keys [sut]}]
+  [file-path {:keys [sut project-ctx]}]
   (let [content (slurp file-path)
         forms   (parse/read-string-all content)
         ns-form (first forms)
         ns-info (parse/parse-ns-form ns-form)
-        trace-ctx (trace/make-trace-ctx ns-info sut (resolve-ns-fn ns-info))
+        project-ctx (or project-ctx {:in-project-namespaces #{}
+                                       :namespace-paths {}
+                                       :external-dep-symbols #{}})
+        test-modules (test-modules/infer-test-module-namespaces
+                      {:test-namespace (:namespace ns-info)
+                       :requires (:requires ns-info)
+                       :sut sut
+                       :project-ctx project-ctx})
+        trace-ctx (trace/make-trace-ctx ns-info sut (resolve-ns-fn ns-info)
+                                         {:test-modules test-modules})
         tests   (find-tests forms)]
     (vec
      (for [{:keys [form test-name body line]} tests
            :let [results (vec (process-forms body {} trace-ctx))
-                 {:keys [verdict reason]} (test-verdict results)]]
+                 {:keys [verdict reason]}
+                 (promote-cloistered (test-verdict results) body {} trace-ctx)]]
        {:file file-path
         :line line
         :test-name (if (string? test-name) test-name (name test-name))
@@ -330,4 +352,5 @@
         :verdict verdict
         :reason reason
         :sut-namespaces sut
-        :trace (build-finding-trace trace-ctx sut results)}))))
+        :trace (assoc (build-finding-trace trace-ctx sut results)
+                      :test-modules test-modules)}))))

@@ -5,6 +5,7 @@
             deintroverter.parse-test
             deintroverter.project-test
             deintroverter.sut-test
+            deintroverter.test-modules-test
             deintroverter.trace-test
             deintroverter.assertions-test
             deintroverter.analyze-test
@@ -18,6 +19,7 @@
     deintroverter.parse-test
     deintroverter.project-test
     deintroverter.sut-test
+    deintroverter.test-modules-test
     deintroverter.trace-test
     deintroverter.assertions-test
     deintroverter.analyze-test

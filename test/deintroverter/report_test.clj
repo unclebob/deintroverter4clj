@@ -26,10 +26,12 @@
               (with-out-str (report/print-human findings false))
               "(it c)  :likely-extroverted")))))
 
-(deftest exit-code-1-when-introverted-or-questionable
-  (is (= 1 (report/exit-code sample-findings [])))
-  (is (= 0 (report/exit-code [{:verdict :extroverted}] [])))
-  (is (= 0 (report/exit-code [{:verdict :likely-extroverted}] []))))
+(deftest exit-code-is-always-zero
+  (is (= 0 (report/exit-code sample-findings [])))
+  (is (= 0 (report/exit-code [{:verdict :introverted}] [])))
+  (is (= 0 (report/exit-code [{:verdict :cloistered}] [])))
+  (is (= 0 (report/exit-code [{:verdict :questionable}] [])))
+  (is (= 0 (report/exit-code [] [{:type :parse-error}]))))
 
 (deftest summary-groups-questionable-and-introverted-by-reason
   (let [findings (concat sample-findings

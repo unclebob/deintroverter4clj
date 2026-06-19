@@ -3,7 +3,8 @@
             [deintroverter.sut :as sut]))
 
 (def project-ctx
-  {:in-project-namespaces #{'myapp.core 'myapp.helpers}
+  {:in-project-namespaces #{'myapp.core 'myapp.helpers 'myapp.helpers-test}
+   :namespace-paths {'myapp.helpers-test "test/myapp/helpers_test.clj"}
    :external-dep-symbols #{'org.clojure/test.check}})
 
 (def infer-opts
@@ -26,6 +27,13 @@
     (is (contains? (sut/infer-sut-namespaces opts) 'myapp.core))
     (is (not (contains? (sut/infer-sut-namespaces opts) 'clojure.test)))
     (is (not (contains? (sut/infer-sut-namespaces opts) 'speclj.core)))))
+
+(deftest excludes-test-layer-namespaces-from-sut
+  (let [opts (assoc infer-opts
+                    :test-namespace 'myapp.cloistered-spec
+                    :requires #{'myapp.core 'myapp.helpers-test})]
+    (is (contains? (sut/infer-sut-namespaces opts) 'myapp.core))
+    (is (not (contains? (sut/infer-sut-namespaces opts) 'myapp.helpers-test)))))
 
 (deftest cli-add-and-remove-overrides
   (is (= #{'myapp.extra}

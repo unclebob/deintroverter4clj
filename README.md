@@ -71,15 +71,15 @@ Paths may be files or directories. Directories are scanned recursively for `.clj
 |---------|---------|
 | `:extroverted` | At least one assertion traces to the SUT (function call, var read, private var invoke, or value derived from a SUT-bound `let`) |
 | `:likely-extroverted` | Unqualified call via `:refer :all` from a SUT namespace (heuristic; not proven) |
-| `:introverted` | All assertions analyzed; none trace to the SUT |
+| `:cloistered` | No SUT reach, but the test body calls or references another test-layer namespace (`-spec`/`-test` suffix, or source under `test/` / `spec/`) |
+| `:introverted` | No SUT reach and no reach into other test modules |
 | `:questionable` | Analysis could not reach a confident verdict |
 
-Likely-extroverted findings are hidden in default human output and do **not** affect the exit code.
+Likely-extroverted findings are hidden in default human output.
 
 ### Exit code
 
-- `0` — no introverted, questionable, or parse errors
-- `1` — at least one introverted or questionable test, or a parse error
+Always `0`. Use the report (human or EDN) for verdicts and parse errors.
 
 ## Output
 
@@ -90,7 +90,7 @@ spec/my_app/core_spec.clj:42  (it adds totals)  :introverted
   reason: no-sut-assertion
 ```
 
-By default, only introverted and questionable tests are printed. Use `--verbose` to include extroverted and likely-extroverted tests.
+By default, cloistered, introverted, and questionable tests are printed. Use `--verbose` to include extroverted and likely-extroverted tests.
 
 ### EDN (`--format edn`)
 
@@ -98,6 +98,7 @@ By default, only introverted and questionable tests are printed. Use `--verbose`
 {:project-root "..."
  :summary {:extroverted 42
            :likely-extroverted 0
+           :cloistered {:total 2 :reaches-test-module 2}
            :introverted {:total 3 :no-sut-assertion 3}
            :questionable {:total 17
                            :unknown-assertion-macro 14

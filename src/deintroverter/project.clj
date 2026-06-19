@@ -26,28 +26,42 @@
         (.endsWith n ".cljs")
         (.endsWith n ".cljc"))))
 
+(defn- relative-path [root-path ^File f]
+  (let [root (.getCanonicalFile (io/file root-path))
+        file (.getCanonicalFile f)
+        root-prefix (str (.getPath root) java.io.File/separator)]
+    (when (.startsWith (.getPath file) root-prefix)
+      (subs (.getPath file) (count root-prefix)))))
+
+(defn- scan-paths [root-path path-entries]
+  (for [entry path-entries
+        :let [dir (io/file root-path entry)]
+        :when (.exists dir)
+        f (file-seq dir)
+        :when (.isFile ^File f)
+        :when (clojure-source? f)
+        :let [ns-sym (ns-from-file f)
+              rel    (relative-path root-path f)]
+        :when (and ns-sym rel)]
+    {:namespace ns-sym :path rel}))
+
 (defn- scan-paths-for-namespaces [root-path path-entries]
-  (into #{}
-        (for [entry path-entries
-              :let [dir (io/file root-path entry)]
-              :when (.exists dir)
-              f (file-seq dir)
-              :when (.isFile ^File f)
-              :when (clojure-source? f)
-              :let [ns-sym (ns-from-file f)]
-              :when ns-sym]
-          ns-sym)))
+  (into #{} (map :namespace (scan-paths root-path path-entries))))
+
+(defn- scan-paths-for-namespace-paths [root-path path-entries]
+  (into {} (map (juxt :namespace :path) (scan-paths root-path path-entries))))
 
 (defn- external-dep-keys [deps-edn]
   (into #{} (filter symbol? (keys deps-edn))))
 
 (defn load-context
   "Load project context from a root path containing deps.edn.
-  Returns {:root :in-project-namespaces :external-dep-symbols}."
+  Returns {:root :in-project-namespaces :namespace-paths :external-dep-symbols}."
   [root-path]
   (let [deps-file (io/file root-path "deps.edn")
         deps      (when (.exists deps-file) (edn/read-string (slurp deps-file)))
         paths     (or (:paths deps) ["src"])]
     {:root                   root-path
      :in-project-namespaces  (scan-paths-for-namespaces root-path paths)
+     :namespace-paths        (scan-paths-for-namespace-paths root-path paths)
      :external-dep-symbols   (external-dep-keys (:deps deps))}))
