@@ -1,6 +1,7 @@
 (ns deintroverter.project
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
+            [clojure.string :as str]
             [deintroverter.parse :as parse])
   (:import [java.io File]))
 
@@ -26,6 +27,14 @@
         (.endsWith n ".cljs")
         (.endsWith n ".cljc"))))
 
+(def ^:private skip-path-segments #{"/.worktrees/" "/.git/"
+                                    "/node_modules/" "/target/"})
+
+(defn- skipped-path? [rel-path]
+  (boolean
+   (some #(str/includes? rel-path %)
+         skip-path-segments)))
+
 (defn- relative-path [root-path ^File f]
   (let [root (.getCanonicalFile (io/file root-path))
         file (.getCanonicalFile f)
@@ -42,7 +51,7 @@
         :when (clojure-source? f)
         :let [ns-sym (ns-from-file f)
               rel    (relative-path root-path f)]
-        :when (and ns-sym rel)]
+        :when (and ns-sym rel (not (skipped-path? rel)))]
     {:namespace ns-sym :path rel}))
 
 (defn- scan-paths-for-namespaces [root-path path-entries]

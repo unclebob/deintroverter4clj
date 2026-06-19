@@ -3,6 +3,11 @@
 
 (def ^:private extensions #{"clj" "cljs" "cljc"})
 
+(def ^:private skip-dir-names #{".git" ".worktrees" "node_modules" "target"})
+
+(defn- skip-dir? [^File dir]
+  (contains? skip-dir-names (.getName dir)))
+
 (defn- extension [^File f]
   (let [name (.getName f)
         dot  (.lastIndexOf name ".")]
@@ -18,8 +23,12 @@
       acc
       (reduce (fn [a ^File child]
                 (cond
-                  (.isDirectory child) (collect-from-dir child a)
-                  (clojure-file? child)  (conj a child)
+                  (and (.isDirectory child) (not (skip-dir? child)))
+                  (collect-from-dir child a)
+
+                  (clojure-file? child)
+                  (conj a child)
+
                   :else a))
               acc
               (seq children)))))
