@@ -16,32 +16,51 @@
     (resolve-ns (symbol n))
     (resolve-ns f)))
 
-(defn- call-sut-level [form ctx]
-  (when (call-sym? form)
-    (let [f (first form)
-          sut (:sut ctx)]
+(defn- var-invoke-target? [form]
+  (and (seq? form) (= 'var (first form)) (symbol? (second form))))
+
+(defn- invoke-form? [form]
+  (and (seq? form) (seq form)
+       (or (symbol? (first form))
+           (var-invoke-target? (first form)))))
+
+(defn- invoke-target-sym [form]
+  (when (and (seq? form) (seq form))
+    (let [f (first form)]
       (cond
-        (let [ns-s (fn-sym-ns f ctx)]
-          (and ns-s (contains? sut (symbol ns-s))))
-        :proven
-
-        (and (nil? (namespace f))
-             (contains? (:refer-syms ctx) f)
-             (contains? sut (get (:refer-syms ctx) f)))
-        :proven
-
-        (and (nil? (namespace f))
-             (not (contains? (:core-syms ctx) f))
-             (seq (:refer-all-sut ctx)))
-        :likely
-
+        (var-invoke-target? f) (second f)
+        (= 'var f) (second form)
+        (symbol? f) f
         :else nil))))
+
+(defn- sym-sut-level [sym ctx]
+  (let [sut (:sut ctx)]
+    (cond
+      (let [ns-s (fn-sym-ns sym ctx)]
+        (and ns-s (contains? sut (symbol ns-s))))
+      :proven
+
+      (and (nil? (namespace sym))
+           (contains? (:refer-syms ctx) sym)
+           (contains? sut (get (:refer-syms ctx) sym)))
+      :proven
+
+      (and (nil? (namespace sym))
+           (not (contains? (:core-syms ctx) sym))
+           (seq (:refer-all-sut ctx)))
+      :likely
+
+      :else nil)))
+
+(defn- call-sut-level [form ctx]
+  (when-let [target (invoke-target-sym form)]
+    (sym-sut-level target ctx)))
 
 (defn- collect-calls [form]
   (cond
     (not (seq? form)) #{}
-    (call-sym? form)  (into #{form} (mapcat collect-calls (rest form)))
-    :else             (into #{} (mapcat collect-calls form))))
+    (invoke-form? form) (into #{form} (mapcat collect-calls (rest form)))
+    :else               (into #{} (mapcat collect-calls form))))
 
 (defn- desugar-> [forms]
   (loop [value (second forms) steps (drop 2 forms)]

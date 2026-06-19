@@ -73,3 +73,13 @@
   (let [bindings {'items '[1 2 3]}]
     (is (= {:verdict :introverted :reason :no-sut-assertion}
            (trace/trace-form '(count items) bindings trace-ctx)))))
+
+(deftest var-invoke-of-sut-fn-is-extroverted
+  (is (= {:verdict :extroverted :reason nil}
+         (trace/trace-form '((var myapp.core/rebuild-coll) walk nil nil 42)
+                           {}
+                           trace-ctx))))
+
+(deftest var-form-of-sut-fn-is-extroverted
+  (is (= {:verdict :extroverted :reason nil}
+         (trace/trace-form '(var myapp.core/rebuild-coll) {} trace-ctx))))
