@@ -130,9 +130,11 @@ Namespaces are treated as SUT when they are:
 
 1. Inferred from the test namespace (`foo.bar-test` or `foo.bar-spec` → `foo.bar`)
 2. Listed in the test file's `:require` clause
-3. In the project (per `deps.edn` paths) and not excluded
+3. In the project (per `deps.edn` `:paths` plus `:extra-paths` from all `:aliases`) and not excluded
 
 Excluded by default: `clojure.*`, common test libraries (Speclj, `clojure.test`, etc.), and external dependency namespaces.
+
+Test-layer namespaces (for `:cloistered`) use the same path scan — e.g. a `spec/` tree declared only under `{:aliases {:spec {:extra-paths ["spec"]}}}` is indexed.
 
 ## What gets traced
 

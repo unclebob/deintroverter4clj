@@ -32,3 +32,8 @@
             {:test-namespace 'myapp.cloistered-spec
              :sut #{'myapp.core}
              :project-ctx project-ctx}))))
+
+(deftest detects-test-module-from-alias-extra-paths
+  (is (contains? (infer 'myapp.spec-mother-spec #{'myapp.spec-mother 'myapp.core}
+                      #{'myapp.core})
+                 'myapp.spec-mother)))

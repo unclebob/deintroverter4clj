@@ -38,6 +38,11 @@
                                                         'myapp.cloistered-spec
                                                         #{'myapp.core}))))))
 
+(deftest classifies-cloistered-via-alias-extra-paths
+  (is (= :cloistered (:verdict (first (analyze "cloistered_spec_mother.clj"
+                                                'myapp.spec-mother-spec
+                                                #{'myapp.core}))))))
+
 (deftest classifies-extroverted-vector-destructure
   (is (= :extroverted (:verdict (first (analyze "questionable_destructure.clj"
                                                  'myapp.core-test #{'myapp.core}))))))

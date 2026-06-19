@@ -16,3 +16,9 @@
                  'myapp.core))
   (is (contains? (:external-dep-symbols (project/load-context fixture-root))
                  'org.clojure/test.check)))
+
+(deftest discovers-namespaces-from-alias-extra-paths
+  (let [ctx (project/load-context fixture-root)]
+    (is (contains? (:in-project-namespaces ctx) 'myapp.spec-mother))
+    (is (= "spec/myapp/spec_mother.clj"
+           (get (:namespace-paths ctx) 'myapp.spec-mother)))))

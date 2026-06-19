@@ -54,13 +54,23 @@
 (defn- external-dep-keys [deps-edn]
   (into #{} (filter symbol? (keys deps-edn))))
 
+(defn- alias-extra-paths [deps]
+  (mapcat (fn [[_alias-name alias-map]]
+            (or (:extra-paths alias-map) []))
+          (:aliases deps)))
+
+(defn- scan-path-entries [deps]
+  (vec (distinct (concat (or (:paths deps) ["src"])
+                         (alias-extra-paths deps)))))
+
 (defn load-context
   "Load project context from a root path containing deps.edn.
+  Scans :paths plus :extra-paths from every entry in :aliases.
   Returns {:root :in-project-namespaces :namespace-paths :external-dep-symbols}."
   [root-path]
   (let [deps-file (io/file root-path "deps.edn")
         deps      (when (.exists deps-file) (edn/read-string (slurp deps-file)))
-        paths     (or (:paths deps) ["src"])]
+        paths     (scan-path-entries deps)]
     {:root                   root-path
      :in-project-namespaces  (scan-paths-for-namespaces root-path paths)
      :namespace-paths        (scan-paths-for-namespace-paths root-path paths)
