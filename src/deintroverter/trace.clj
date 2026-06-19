@@ -122,6 +122,38 @@
   (keep #(binding-origin-level % bindings ctx)
         (filter #(contains? bindings %) (symbols-in-form form))))
 
+(defn- deref-form? [form]
+  (and (seq? form)
+       (= 'clojure.core/deref (first form))
+       (symbol? (second form))))
+
+(defn- collect-derefs [form]
+  (cond
+    (not (seq? form)) #{}
+    (deref-form? form)  (into #{form} (mapcat collect-derefs (rest form)))
+    :else               (into #{} (mapcat collect-derefs form))))
+
+(defn- sut-var-ref-level [sym bindings {:keys [sut refer-syms] :as ctx}]
+  (when (and (symbol? sym) (not (contains? bindings sym)))
+    (cond
+      (namespace sym)
+      (let [ns-s (fn-sym-ns sym ctx)]
+        (when (and ns-s (contains? sut (symbol ns-s)))
+          :proven))
+
+      (contains? refer-syms sym)
+      (when (contains? sut (get refer-syms sym))
+        :proven)
+
+      :else nil)))
+
+(defn- sut-var-ref-levels [form bindings ctx]
+  (concat
+   (keep #(sut-var-ref-level % bindings ctx)
+         (symbols-in-form form))
+   (keep #(sut-var-ref-level (second %) bindings ctx)
+         (collect-derefs form))))
+
 (defn trace-form
   "Trace a form to determine assertion verdict.
   bindings: map of symbol → originating form from let, plus optional
@@ -144,6 +176,7 @@
     (let [expanded (expand-threading form)
           calls    (collect-calls expanded)
           levels   (concat (keep #(call-sut-level % ctx) calls)
+                           (sut-var-ref-levels expanded bindings ctx)
                            (binding-origin-levels expanded bindings ctx))]
       (or (levels->verdict levels)
           (when (bindings-have-destructuring? bindings)

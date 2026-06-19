@@ -83,3 +83,26 @@
 (deftest var-form-of-sut-fn-is-extroverted
   (is (= {:verdict :extroverted :reason nil}
          (trace/trace-form '(var myapp.core/rebuild-coll) {} trace-ctx))))
+
+(def resolve-ns-with-alias
+  (fn [sym]
+    (if (= sym 'm) "myapp.core" (name sym))))
+
+(deftest sut-def-var-read-is-extroverted
+  (is (= {:verdict :extroverted :reason nil}
+         (trace/trace-form '(every? contains? m/rules)
+                           {}
+                           (assoc trace-ctx :resolve-ns resolve-ns-with-alias))))
+  (is (= {:verdict :extroverted :reason nil}
+         (trace/trace-form '(seq m/rules) {}
+                           (assoc trace-ctx :resolve-ns resolve-ns-with-alias)))))
+
+(deftest sut-atom-deref-is-extroverted
+  (is (= {:verdict :extroverted :reason nil}
+         (trace/trace-form '(clojure.core/deref m/status) {}
+                           (assoc trace-ctx :resolve-ns resolve-ns-with-alias)))))
+
+(deftest harness-atom-deref-stays-introverted
+  (let [bindings {'waited? '(atom false)}]
+    (is (= {:verdict :introverted :reason :no-sut-assertion}
+           (trace/trace-form '(clojure.core/deref waited?) bindings trace-ctx)))))
