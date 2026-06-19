@@ -45,6 +45,11 @@
     (is (= 2 (count forms)))
     (is (= '(s/def :myapp.geometry-spec/number number?) (second forms)))))
 
+(deftest reads-defmacro-with-syntax-quote
+  (is (= 2
+         (count (parse/read-string-all
+                 "(ns t)\n(defmacro with-log-path [path & body]\n  `(let [x# 1] ~@body))")))))
+
 (deftest reads-alias-qualified-keywords
   (let [forms (parse/read-string-all
                (str "(ns myapp.game-spec\n"

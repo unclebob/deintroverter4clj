@@ -9,7 +9,8 @@
    :regex true
    :var true
    :deref true
-   :quote true})
+   :quote true
+   :syntax-quote true})
 
 (defn- auto-resolve-opts [{:keys [namespace aliases]}]
   (when namespace
