@@ -219,6 +219,7 @@ When static tracing cannot reach the asserted expression, these patterns may sti
 |--------|---------|
 | `:sut-side-effect-heuristic` | SUT call, then assertion on test-module state or an immediate side effect |
 | `:sut-wiring-heuristic` | `with-redefs` stub does `reset!`/`swap!` on a `let`-bound atom, SUT runs in the same body, assertion on `@atom` |
+| `:file-dependency` | SUT call in the same body, then assertion on filesystem/external read (`slurp`, `File.`, `Files/…`, `.exists`, etc.) |
 
 ## Development
 

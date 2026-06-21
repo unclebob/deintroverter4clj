@@ -14,3 +14,6 @@
 
 (defn move-coastline-unit [_] nil)
 
+(defn write-text-file [path content]
+  (spit path content))
+

@@ -779,6 +779,47 @@
                    :preceding-sut-call sut-call)}
      cctx)))
 
+(def ^:private file-interop-methods
+  #{".exists" ".isDirectory" ".isFile" ".listFiles" ".startsWith" ".getPath" ".getName"})
+
+(defn- interop-method-sym? [sym]
+  (and (symbol? sym) (.startsWith (name sym) ".")))
+
+(defn- files-invoke? [form]
+  (and (seq? form) (symbol? (first form))
+       (when-let [ns (namespace (first form))]
+         (= "Files" (name ns)))))
+
+(defn- file-dependency-form? [form]
+  (cond
+    (nil? form) false
+    (and (seq? form) (= 'slurp (first form))) true
+    (and (seq? form) (#{'File. 'java.io.File} (first form))) true
+    (and (seq? form) (interop-method-sym? (first form))
+         (contains? file-interop-methods (name (first form)))) true
+    (files-invoke? form) true
+    (seq? form) (boolean (some file-dependency-form? form))
+    :else false))
+
+(defn- file-dependency-evidence [asserted-form bindings trace-ctx walk-state]
+  (when (= :introverted (:verdict (trace/trace-form asserted-form bindings trace-ctx)))
+    (when (and (:seen-sut? walk-state)
+               (wiring-sut-call walk-state bindings trace-ctx)
+               (file-dependency-form? asserted-form))
+      :file-dependency)))
+
+(defn- file-dependency-assertion-result
+  [assertion-form asserted-form bindings trace-ctx walk-state cctx]
+  (let [sut-call (wiring-sut-call walk-state bindings trace-ctx)]
+    (finalize-assertion-result
+     {:verdict :likely-extroverted
+      :reason :file-dependency
+      :trace (assoc (trace/explain-trace sut-call bindings trace-ctx)
+                   :assertion-form assertion-form
+                   :external-dependency-evidence :file-dependency
+                   :preceding-sut-call sut-call)}
+     cctx)))
+
 (defn- side-effect-evidence
   [asserted-form bindings trace-ctx {:keys [preceding seen-sut?]}]
   (when (= :introverted (:verdict (trace/trace-form asserted-form bindings trace-ctx)))
@@ -900,6 +941,12 @@
         (assoc (select-keys advanced walk-state-keys)
                :results [(wiring-assertion-result form (:asserted-form parsed) bindings
                                                    trace-ctx walk-state cctx)]))
+
+      (file-dependency-evidence (:asserted-form parsed) bindings trace-ctx walk-state)
+      (let [advanced (advance-walk-state form bindings trace-ctx walk-state)]
+        (assoc (select-keys advanced walk-state-keys)
+               :results [(file-dependency-assertion-result form (:asserted-form parsed) bindings
+                                                           trace-ctx walk-state cctx)]))
 
       (side-effect-evidence (:asserted-form parsed) bindings trace-ctx walk-state)
       (let [advanced (advance-walk-state form bindings trace-ctx walk-state)]

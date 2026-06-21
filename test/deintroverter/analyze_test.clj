@@ -77,6 +77,16 @@
     (is (= :introverted (:verdict (second findings))))
     (is (= :no-sut-assertion (:reason (second findings))))))
 
+(deftest classifies-file-dependency-as-likely-extroverted
+  (let [findings (analyze "file_dependency.clj" 'myapp.file-dependency-spec #{'myapp.core})]
+    (is (= 2 (count findings)))
+    (is (= :likely-extroverted (:verdict (first findings))))
+    (is (= :file-dependency (:reason (first findings))))
+    (is (= :file-dependency
+           (get-in (first findings) [:trace :assertions 0 :external-dependency-evidence])))
+    (is (= :introverted (:verdict (second findings))))
+    (is (= :no-sut-assertion (:reason (second findings))))))
+
 (deftest classifies-cloistered-via-alias-extra-paths
   (is (= :cloistered (:verdict (first (analyze "cloistered_spec_mother.clj"
                                                 'myapp.spec-mother-spec
