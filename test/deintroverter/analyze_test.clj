@@ -67,6 +67,16 @@
            (get-in (second findings) [:trace :assertions 0 :side-effect-evidence])))
     (is (= :cloistered (:verdict (nth findings 2))))))
 
+(deftest classifies-stub-capture-wiring-as-likely-extroverted
+  (let [findings (analyze "stub_capture_wiring.clj" 'myapp.stub-capture-wiring-spec #{'myapp.core})]
+    (is (= 2 (count findings)))
+    (is (= :likely-extroverted (:verdict (first findings))))
+    (is (= :sut-wiring-heuristic (:reason (first findings))))
+    (is (= :stub-capture
+           (get-in (first findings) [:trace :assertions 0 :wiring-evidence])))
+    (is (= :introverted (:verdict (second findings))))
+    (is (= :no-sut-assertion (:reason (second findings))))))
+
 (deftest classifies-cloistered-via-alias-extra-paths
   (is (= :cloistered (:verdict (first (analyze "cloistered_spec_mother.clj"
                                                 'myapp.spec-mother-spec
@@ -573,6 +583,42 @@
                            :else (list 'is (list '= 1 (list 'core/calculate-total '[1])))))]
         findings (analyze/analyze-forms forms
                                         {:sut (sut-for 'myapp.cond-else-test #{'myapp.core})
+                                         :project-ctx project-ctx})]
+    (is (= 1 (count findings)))
+    (is (= :extroverted (:verdict (first findings))))))
+
+(deftest classifies-doseq-case-literal-dispatch-as-extroverted
+  (let [forms [(list 'ns 'myapp.case-doseq-test
+                      (list :require '[clojure.test :refer [deftest is]]
+                            '[myapp.core :as core]))
+               (list 'deftest 'table-case
+                     (list 'doseq '[[args expected]
+                                    [[[] :missing-source]
+                                     [["bad"] "error message"]]]
+                           (list 'let '[result (list 'core/validate-args 'args)]
+                                 (list 'case 'expected
+                                       :missing-source
+                                       (list 'is (list 'contains? 'result ':error))
+                                       (list 'is (list '= 'expected (list ':error 'result)))))))]
+        findings (analyze/analyze-forms forms
+                                        {:sut (sut-for 'myapp.case-doseq-test #{'myapp.core})
+                                         :project-ctx project-ctx})]
+    (is (= 1 (count findings)))
+    (is (= :extroverted (:verdict (first findings))))))
+
+(deftest classifies-case-literal-binding-as-extroverted
+  (let [forms [(list 'ns 'myapp.case-bound-test
+                      (list :require '[clojure.test :refer [deftest is]]
+                            '[myapp.core :as core]))
+               (list 'deftest 'bound-dispatch
+                     (list 'let '[expected :missing-source
+                                  result (list 'core/validate-args '[])]
+                           (list 'case 'expected
+                                 :missing-source
+                                 (list 'is (list 'contains? 'result ':error))
+                                 (list 'is false))))]
+        findings (analyze/analyze-forms forms
+                                        {:sut (sut-for 'myapp.case-bound-test #{'myapp.core})
                                          :project-ctx project-ctx})]
     (is (= 1 (count findings)))
     (is (= :extroverted (:verdict (first findings))))))

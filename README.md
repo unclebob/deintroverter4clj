@@ -71,11 +71,12 @@ Paths may be files or directories. Directories are scanned recursively for `.clj
 |---------|---------|
 | `:extroverted` | At least one assertion traces to the SUT (function call, var read, private var invoke, or value derived from a SUT-bound `let`) |
 | `:likely-extroverted` | Unqualified call via `:refer :all` from a SUT namespace (heuristic; not proven) |
+| `:conditional-assertion` | Assertions sit behind a conditional the analyzer could not fully flatten; see [Conditional assertions](#conditional-assertions) |
 | `:cloistered` | No SUT reach, but the test body calls or references another test-layer namespace (`-spec`/`-test` suffix, or source under `test/` / `spec/`) |
 | `:introverted` | No SUT reach and no reach into other test modules |
 | `:questionable` | Analysis could not reach a confident verdict |
 
-Likely-extroverted findings are hidden in default human output.
+Likely-extroverted findings are hidden in default human output. Conditional-assertion findings are printed by default.
 
 ### Exit code
 
@@ -88,9 +89,12 @@ Always `0`. Use the report (human or EDN) for verdicts and parse errors.
 ```
 spec/my_app/core_spec.clj:42  (it adds totals)  :introverted
   reason: no-sut-assertion
+spec/my_app/core_spec.clj:101  (it validates errors)  :conditional-assertion
+  reason: would-be-extroverted
+  cause: runtime when
 ```
 
-By default, cloistered, introverted, and questionable tests are printed. Use `--verbose` to include extroverted and likely-extroverted tests.
+By default, conditional-assertion, cloistered, introverted, and questionable tests are printed. Use `--verbose` to include extroverted and likely-extroverted tests.
 
 ### EDN (`--format edn`)
 
@@ -98,6 +102,11 @@ By default, cloistered, introverted, and questionable tests are printed. Use `--
 {:project-root "..."
  :summary {:extroverted 42
            :likely-extroverted 0
+           :conditional-assertion {:total 2
+                                   :would-be-extroverted 1
+                                   :no-sut-assertion 1
+                                   :by-cause {:runtime-conditional 1
+                                              :missing-doseq-guard 1}}
            :cloistered {:total 2 :reaches-test-module 2}
            :introverted {:total 3 :no-sut-assertion 3}
            :questionable {:total 17
@@ -146,15 +155,70 @@ The analyzer walks test bodies and traces asserted expressions to:
 - `let` bindings — including projections like `(:action command)` when `command` came from a SUT call
 - Threading macros `->` and `->>` (desugared)
 
-Transparent wrappers (`do`, `try`, `let`, `with-redefs`, `doseq`) are walked through to inner assertions.
+Transparent wrappers (`do`, `try`, `let`, `with-redefs`) are walked through to inner assertions. `doseq` and `dotimes` are flattened when safe — see [Conditional assertions](#conditional-assertions).
 
 Unsupported forms are marked questionable: destructuring in `let`, anonymous fns in assertions, `as->` / `some->` / `cond->` in asserted values, and unrecognized assertion macros.
+
+## Conditional assertions
+
+A test is `:conditional-assertion` when every extroverted path runs through a conditional the analyzer cannot reduce to a single branch. These tests may still kill mutants in practice; the verdict means static analysis could not prove all branches assert against the SUT.
+
+### Reasons (`:reason`)
+
+| Reason | Meaning |
+|--------|---------|
+| `:would-be-extroverted` | Conditional branches that run would trace to the SUT |
+| `:would-be-likely-extroverted` | Branches would be likely-extroverted (e.g. `:refer :all` heuristic) |
+| `:no-sut-assertion` | Branches would be introverted |
+| `:unknown-assertion-macro` / `:destructuring` | Branches would be questionable |
+
+If the test also has an unconditional extroverted assertion, that wins and the test is `:extroverted`.
+
+### Causes (`:conditional-cause`)
+
+Reported when every conditional assertion shares the same cause. Human output prints it as `cause: …`; EDN uses `:conditional-cause` and `:conditional-context`.
+
+| Cause | When | Typical outcome |
+|-------|------|-----------------|
+| `:runtime-conditional` | `when`, `if`, `cond`, `case`, etc. with a non-literal test or dispatch value | `:conditional-assertion` |
+| `:partial-dispatch-if` | `if` where only one branch contains assertions | `:conditional-assertion` |
+| `:missing-doseq-guard` | `doseq` over a runtime collection with no emptiness guard | `:conditional-assertion` |
+| `:near-doseq-guard` | `doseq` over a runtime collection; a non-guard assertion references the collection | `:conditional-assertion` |
+| `:non-flattenable-doseq` | `doseq` collection is not a literal vector (and no guard applies) | `:conditional-assertion` |
+| `:runtime-dotimes` | `dotimes` count is not a literal integer ≤ 32 | `:conditional-assertion` |
+| `:malformed-doseq` | Invalid `doseq` binding form | `:conditional-assertion` |
+
+### Flattened to `:extroverted`
+
+These conditionals are reduced so each reachable branch is analyzed independently:
+
+| Form | Condition |
+|------|-----------|
+| `when` / `when-not` / `if` | Literal test (`true` / `false`) |
+| `cond` | Literal tests; `:else` when no earlier test is `true` |
+| `if` (dispatch) | Both branches contain assertions |
+| `case` / `case+` | Dispatch value is a compile-time literal (inline or from bindings, e.g. a `doseq` table column) |
+| `doseq` | Literal vector table, or runtime collection preceded by `(should (seq coll))`, `(should (not-empty coll))`, `(should-not (empty? coll))`, or `(should-be-nil coll)` |
+| `dotimes` | Literal positive count ≤ 32 |
+
+**Example:** a table-driven `doseq` that binds `expected` to `:missing-source` or `"error message"`, then `(case expected …)` — each row is flattened and the matching `case` branch is selected, so the test is `:extroverted`.
+
+**Counter-example:** `(case x …)` where `x` is `(core/calculate-total items)` — dispatch is runtime, so the test stays `:conditional-assertion` with cause `:runtime-conditional`.
 
 ### Supported assertion macros
 
 **clojure.test:** `is`, `are`
 
 **Speclj:** `should`, `should=`, `should==`, `should>`, `should-not`, `should-be`, `should-not-be`, `should-be-nil`, `should-not-be-nil`, `should-contain`, `should-be-a`, `should-throw`, `should-not-throw`, `should-throw?`, `should-not-throw?`, `should-have-invoked`, `should-not-have-invoked` (stub macros trace the immediately preceding SUT call in the same body)
+
+### Wiring heuristics (`:likely-extroverted`)
+
+When static tracing cannot reach the asserted expression, these patterns may still promote to `:likely-extroverted`:
+
+| Reason | Pattern |
+|--------|---------|
+| `:sut-side-effect-heuristic` | SUT call, then assertion on test-module state or an immediate side effect |
+| `:sut-wiring-heuristic` | `with-redefs` stub does `reset!`/`swap!` on a `let`-bound atom, SUT runs in the same body, assertion on `@atom` |
 
 ## Development
 
