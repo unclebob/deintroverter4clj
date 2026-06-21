@@ -39,3 +39,12 @@
       (let [f (write-file dir "one.clj" "(ns one)")]
         (is (= [f] (paths/collect-files [(.getPath f)]))))
       (finally (delete-tree dir)))))
+
+(deftest skips-ignored-directories
+  (let [dir (tmp-dir)]
+    (try
+      (write-file dir "src/a.clj" "(ns a)")
+      (write-file dir "target/hidden/b.clj" "(ns b)")
+      (is (= #{"a.clj"}
+             (file-names (paths/collect-files [(.getPath dir)]))))
+      (finally (delete-tree dir)))))

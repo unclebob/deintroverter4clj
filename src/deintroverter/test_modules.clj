@@ -28,5 +28,5 @@
                            (or requires #{})))))
 
 ;; clj-mutate-manifest-begin
-;; {:version 1, :tested-at "2026-06-19T12:53:13.755534-05:00", :module-hash "1442571816", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line 3, :hash "-1763255898"} {:id "defn/test-layer-namespace?", :kind "defn", :line 5, :end-line 11, :hash "656428814"} {:id "defn/test-module-namespace?", :kind "defn", :line 13, :end-line 18, :hash "598565465"} {:id "defn/infer-test-module-namespaces", :kind "defn", :line 20, :end-line 28, :hash "-69383862"}]}
+;; {:version 1, :tested-at "2026-06-21T09:32:00.830599-05:00", :module-hash "1442571816", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line 3, :hash "-1763255898"} {:id "defn/test-layer-namespace?", :kind "defn", :line 5, :end-line 11, :hash "656428814"} {:id "defn/test-module-namespace?", :kind "defn", :line 13, :end-line 18, :hash "598565465"} {:id "defn/infer-test-module-namespaces", :kind "defn", :line 20, :end-line 28, :hash "-69383862"}]}
 ;; clj-mutate-manifest-end

@@ -26,5 +26,5 @@
     (runner-support/exit-if-failed! result)))
 
 ;; clj-mutate-manifest-begin
-;; {:version 1, :tested-at "2026-06-19T12:53:17.557511-05:00", :module-hash "2098873315", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line 16, :hash "1470038655"} {:id "def/test-namespaces", :kind "def", :line 18, :end-line 31, :hash "1458480864"} {:id "defn/run", :kind "defn", :line 33, :end-line 37, :hash "725974491"}]}
+;; {:version 1, :tested-at "2026-06-21T09:32:03.953659-05:00", :module-hash "1056645561", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line 3, :hash "-1111467842"} {:id "def/test-namespaces", :kind "def", :line 5, :end-line 18, :hash "1458480864"} {:id "defn/run", :kind "defn", :line 20, :end-line 26, :hash "1616079063"}]}
 ;; clj-mutate-manifest-end

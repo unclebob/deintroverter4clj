@@ -104,9 +104,7 @@
 (deftest classifies-speclj-wrappers-as-extroverted
   (let [findings (analyze "speclj_wrappers.clj" 'myapp.wrapper-spec #{'myapp.core})]
     (is (= 3 (count findings)))
-    (is (= :extroverted (:verdict (first findings))))
-    (is (= :conditional-assertion (:verdict (second findings))))
-    (is (= :extroverted (:verdict (nth findings 2))))))
+    (is (every? #(= :extroverted (:verdict %)) findings))))
 
 (deftest classifies-through-setup-forms
   (let [findings (analyze "speclj_setup.clj" 'myapp.setup-spec #{'myapp.core})]
@@ -116,8 +114,7 @@
 (deftest classifies-invoked-fn-literal-assertions
   (let [findings (analyze "speclj_fn_assertions.clj" 'myapp.fn-assertions-spec #{'myapp.core})]
     (is (= 1 (count findings)))
-    (is (= :conditional-assertion (:verdict (first findings))))
-    (is (= :would-be-extroverted (:reason (first findings))))))
+    (is (= :extroverted (:verdict (first findings))))))
 
 (deftest classifies-should-greater-than-as-extroverted
   (is (= :extroverted (:verdict (first (analyze "speclj_should_gt.clj"
@@ -134,9 +131,10 @@
                           #{'myapp.core})]
     (is (= 5 (count findings)))
     (is (every? #(pos? (count (get-in % [:trace :assertions]))) findings))
-    (is (every? #(= :conditional-assertion (:verdict %)) findings))
-    (is (every? #(:conditional? (first (get-in % [:trace :assertions]))) findings))
-    (is (= :would-be-extroverted (:reason (first findings))))))
+    (is (= 1 (count (filter #(= :conditional-assertion (:verdict %)) findings))))
+    (is (= :would-be-extroverted
+           (:reason (first (filter #(= :conditional-assertion (:verdict %)) findings)))))
+    (is (= 4 (count (filter #(= :extroverted (:verdict %)) findings))))))
 
 (deftest classifies-when-body-with-refer-all-sut
   (let [findings (analyze "coastline_when_empire_body.clj"
@@ -148,12 +146,12 @@
     (is (= 2 (count (get-in (first findings) [:trace :assertions]))))))
 
 (deftest unconditional-assertion-outranks-conditional
-  (let [{:keys [trace]} (first (analyze "conditional_mixed.clj"
-                                        'myapp.conditional-mixed-spec
-                                        #{'myapp.core}))]
-    (is (= :extroverted (:verdict (first (:assertions trace)))))
-    (is (true? (:conditional? (second (:assertions trace)))))
-    (is (= :extroverted (:underlying-verdict (second (:assertions trace)))))))
+  (let [{:keys [trace verdict]} (first (analyze "conditional_mixed.clj"
+                                                'myapp.conditional-mixed-spec
+                                                #{'myapp.core}))]
+    (is (= :extroverted verdict))
+    (is (= 1 (count (:assertions trace))))
+    (is (= :extroverted (:verdict (first (:assertions trace)))))))
 
 (deftest edn-findings-include-assertion-trace
   (let [{:keys [trace]} (first (analyze "extroverted_direct.clj"
@@ -179,11 +177,11 @@
     (is (= :conditional-assertion (:verdict (first findings))))
     (is (= :would-be-extroverted (:reason (first findings))))))
 
-(deftest classifies-introverted-conditional-assertion
+(deftest classifies-introverted-runtime-when-as-conditional
   (let [forms [(list 'ns 'myapp.intro-cond-test
                       (list :require '[clojure.test :refer [deftest is]]))
                (list 'deftest 'intro-in-when
-                     (list 'when true '(is (= 1 (count items)))))]
+                     (list 'when 'flag '(is (= 1 (count items)))))]
         findings (analyze/analyze-forms forms
                                         {:sut (sut-for 'myapp.intro-cond-test #{'myapp.core})
                                          :project-ctx project-ctx})]
@@ -191,14 +189,299 @@
     (is (= :conditional-assertion (:verdict (first findings))))
     (is (= :no-sut-assertion (:reason (first findings))))))
 
-(deftest classifies-questionable-conditional-assertion
+(deftest classifies-questionable-runtime-when-as-conditional
   (let [forms [(list 'ns 'myapp.quest-cond-test
                       (list :require '[clojure.test :refer [deftest is]]))
                (list 'deftest 'quest-in-when
-                     (list 'when true '(expect= 1 2)))]
+                     (list 'when 'flag '(expect= 1 2)))]
         findings (analyze/analyze-forms forms
                                         {:sut (sut-for 'myapp.quest-cond-test #{'myapp.core})
                                          :project-ctx project-ctx})]
     (is (= 1 (count findings)))
     (is (= :conditional-assertion (:verdict (first findings))))
     (is (= :unknown-assertion-macro (:reason (first findings))))))
+
+(deftest classifies-flattenable-doseq-as-extroverted
+  (let [forms [(list 'ns 'myapp.table-test
+                      (list :require '[clojure.test :refer [deftest is]]
+                            '[myapp.core :as core]))
+               (list 'deftest 'table-driven
+                     (list 'doseq '[n [1 2]]
+                           (list 'is (list '= 'n (list 'core/calculate-total (list 'n))))))]
+        findings (analyze/analyze-forms forms
+                                        {:sut (sut-for 'myapp.table-test #{'myapp.core})
+                                         :project-ctx project-ctx})]
+    (is (= 1 (count findings)))
+    (is (= :extroverted (:verdict (first findings))))))
+
+(deftest classifies-guarded-doseq-as-extroverted
+  (let [forms [(list 'ns 'myapp.guarded-test
+                      (list :require '[clojure.test :refer [deftest is]]
+                            '[myapp.core :as core]))
+               (list 'deftest 'guarded-table
+                     (list 'let '[rows [[1] [2]]]
+                           (list 'is (list 'seq 'rows))
+                           (list 'doseq '[row rows]
+                                 (list 'is (list '= 1 (list 'core/calculate-total 'row))))))]
+        findings (analyze/analyze-forms forms
+                                        {:sut (sut-for 'myapp.guarded-test #{'myapp.core})
+                                         :project-ctx project-ctx})]
+    (is (= 1 (count findings)))
+    (is (= :extroverted (:verdict (first findings))))))
+
+(deftest classifies-dispatch-if-as-extroverted
+  (let [forms [(list 'ns 'myapp.dispatch-if-test
+                      (list :require '[clojure.test :refer [deftest is]]
+                            '[myapp.core :as core]))
+               (list 'deftest 'both-branches-assert
+                     (list 'if 'expected
+                           (list 'is (list '= 1 (list 'core/calculate-total '[1])))
+                           (list 'is (list '= 2 (list 'core/calculate-total '[1 2])))))]
+        findings (analyze/analyze-forms forms
+                                        {:sut (sut-for 'myapp.dispatch-if-test #{'myapp.core})
+                                         :project-ctx project-ctx})]
+    (is (= 1 (count findings)))
+    (is (= :extroverted (:verdict (first findings))))))
+
+(deftest classifies-literal-when-false-as-introverted
+  (let [forms [(list 'ns 'myapp.when-false-test
+                      (list :require '[clojure.test :refer [deftest is]]
+                            '[myapp.core :as core]))
+               (list 'deftest 'skipped-body
+                     (list 'when false
+                           (list 'is (list '= 1 (list 'core/calculate-total '[1])))))]
+        findings (analyze/analyze-forms forms
+                                        {:sut (sut-for 'myapp.when-false-test #{'myapp.core})
+                                         :project-ctx project-ctx})]
+    (is (= 1 (count findings)))
+    (is (= :introverted (:verdict (first findings))))
+    (is (= :no-assertions (:reason (first findings))))))
+
+(deftest classifies-literal-if-true-as-extroverted
+  (let [forms [(list 'ns 'myapp.if-true-test
+                      (list :require '[clojure.test :refer [deftest is]]
+                            '[myapp.core :as core]))
+               (list 'deftest 'then-branch
+                     (list 'if true
+                           (list 'is (list '= 1 (list 'core/calculate-total '[1])))
+                           (list 'is (list '= 0 (list 'count '[1])))))]
+        findings (analyze/analyze-forms forms
+                                        {:sut (sut-for 'myapp.if-true-test #{'myapp.core})
+                                         :project-ctx project-ctx})]
+    (is (= 1 (count findings)))
+    (is (= :extroverted (:verdict (first findings))))))
+
+(deftest classifies-not-empty-guard-before-doseq-as-extroverted
+  (let [forms [(list 'ns 'myapp.not-empty-test
+                      (list :require '[clojure.test :refer [deftest is]]
+                            '[myapp.core :as core]))
+               (list 'deftest 'not-empty-guard
+                     (list 'let '[rows [[1]]]
+                           (list 'is (list 'not-empty 'rows))
+                           (list 'doseq '[row rows]
+                                 (list 'is (list '= 1 (list 'core/calculate-total 'row))))))]
+        findings (analyze/analyze-forms forms
+                                        {:sut (sut-for 'myapp.not-empty-test #{'myapp.core})
+                                         :project-ctx project-ctx})]
+    (is (= 1 (count findings)))
+    (is (= :extroverted (:verdict (first findings))))))
+
+(deftest classifies-literal-dotimes-as-extroverted
+  (let [forms [(list 'ns 'myapp.dotimes-test
+                      (list :require '[clojure.test :refer [deftest is]]
+                            '[myapp.core :as core]))
+               (list 'deftest 'fixed-count
+                     (list 'dotimes '[i 2]
+                           (list 'is (list '= 1 (list 'core/calculate-total (list 'inc 'i))))))]
+        findings (analyze/analyze-forms forms
+                                        {:sut (sut-for 'myapp.dotimes-test #{'myapp.core})
+                                         :project-ctx project-ctx})]
+    (is (= 1 (count findings)))
+    (is (= :extroverted (:verdict (first findings))))))
+
+(deftest classifies-literal-cond-true-as-extroverted
+  (let [forms [(list 'ns 'myapp.cond-true-test
+                      (list :require '[clojure.test :refer [deftest is]]
+                            '[myapp.core :as core]))
+               (list 'deftest 'first-branch
+                     (list 'cond
+                           true (list 'is (list '= 1 (list 'core/calculate-total '[1])))
+                           :else (list 'is (list '= 0 (list 'count '[1])))))]
+        findings (analyze/analyze-forms forms
+                                        {:sut (sut-for 'myapp.cond-true-test #{'myapp.core})
+                                         :project-ctx project-ctx})]
+    (is (= 1 (count findings)))
+    (is (= :extroverted (:verdict (first findings))))))
+
+(deftest classifies-empty-guard-before-doseq-as-extroverted
+  (let [forms [(list 'ns 'myapp.empty-guard-test
+                      (list :require '[speclj.core :refer [describe it should-not should=]]
+                            '[myapp.core :as core]))
+               (list 'describe 'empty-guard
+                     (list 'it 'guarded-table
+                           (list 'let '[rows [[1]]]
+                                 (list 'should-not (list 'empty? 'rows))
+                                 (list 'doseq '[row rows]
+                                       (list 'should= 1 (list 'core/calculate-total 'row))))))]
+        findings (analyze/analyze-forms forms
+                                        {:sut (sut-for 'myapp.empty-guard-test #{'myapp.core})
+                                         :project-ctx project-ctx})]
+    (is (= 1 (count findings)))
+    (is (= :extroverted (:verdict (first findings))))))
+
+(deftest classifies-should-be-nil-guard-before-doseq-as-extroverted
+  (let [forms [(list 'ns 'myapp.nil-guard-test
+                      (list :require '[speclj.core :refer [describe it should-be-nil should=]]
+                            '[myapp.core :as core]))
+               (list 'describe 'nil-guard
+                     (list 'it 'guarded-table
+                           (list 'let '[rows nil]
+                                 (list 'should-be-nil 'rows)
+                                 (list 'doseq '[row rows]
+                                       (list 'should= 0 (list 'core/calculate-total 'row))))))]
+        findings (analyze/analyze-forms forms
+                                        {:sut (sut-for 'myapp.nil-guard-test #{'myapp.core})
+                                         :project-ctx project-ctx})]
+    (is (= 1 (count findings)))
+    (is (= :extroverted (:verdict (first findings))))))
+
+(deftest classifies-literal-when-not-false-as-extroverted
+  (let [forms [(list 'ns 'myapp.when-not-false-test
+                      (list :require '[clojure.test :refer [deftest is]]
+                            '[myapp.core :as core]))
+               (list 'deftest 'active-body
+                     (list 'when-not false
+                           (list 'is (list '= 1 (list 'core/calculate-total '[1])))))]
+        findings (analyze/analyze-forms forms
+                                        {:sut (sut-for 'myapp.when-not-false-test #{'myapp.core})
+                                         :project-ctx project-ctx})]
+    (is (= 1 (count findings)))
+    (is (= :extroverted (:verdict (first findings))))))
+
+(deftest classifies-literal-when-not-true-as-introverted
+  (let [forms [(list 'ns 'myapp.when-not-true-test
+                      (list :require '[clojure.test :refer [deftest is]]
+                            '[myapp.core :as core]))
+               (list 'deftest 'skipped-body
+                     (list 'when-not true
+                           (list 'is (list '= 1 (list 'core/calculate-total '[1])))))]
+        findings (analyze/analyze-forms forms
+                                        {:sut (sut-for 'myapp.when-not-true-test #{'myapp.core})
+                                         :project-ctx project-ctx})]
+    (is (= 1 (count findings)))
+    (is (= :introverted (:verdict (first findings))))
+    (is (= :no-assertions (:reason (first findings))))))
+
+(deftest classifies-literal-if-false-as-extroverted
+  (let [forms [(list 'ns 'myapp.if-false-test
+                      (list :require '[clojure.test :refer [deftest is]]
+                            '[myapp.core :as core]))
+               (list 'deftest 'else-branch
+                     (list 'if false
+                           (list 'is (list '= 0 (list 'count '[1])))
+                           (list 'is (list '= 1 (list 'core/calculate-total '[1])))))]
+        findings (analyze/analyze-forms forms
+                                        {:sut (sut-for 'myapp.if-false-test #{'myapp.core})
+                                         :project-ctx project-ctx})]
+    (is (= 1 (count findings)))
+    (is (= :extroverted (:verdict (first findings))))))
+
+(deftest classifies-runtime-cond-as-conditional
+  (let [forms [(list 'ns 'myapp.runtime-cond-test
+                      (list :require '[clojure.test :refer [deftest is]]
+                            '[myapp.core :as core]))
+               (list 'deftest 'runtime-branches
+                     (list 'let '[x 1]
+                           (list 'cond
+                                 'x (list 'is (list '= 1 (list 'core/calculate-total '[1])))
+                                 :else (list 'is (list '= 0 (list 'count '[1]))))))]
+        findings (analyze/analyze-forms forms
+                                        {:sut (sut-for 'myapp.runtime-cond-test #{'myapp.core})
+                                         :project-ctx project-ctx})]
+    (is (= 1 (count findings)))
+    (is (= :conditional-assertion (:verdict (first findings))))))
+
+(deftest classifies-dispatch-if-with-one-unasserted-branch-as-conditional
+  (let [forms [(list 'ns 'myapp.partial-dispatch-if-test
+                      (list :require '[clojure.test :refer [deftest is]]
+                            '[myapp.core :as core]))
+               (list 'deftest 'one-branch-asserts
+                     (list 'if 'flag
+                           (list 'is (list '= 1 (list 'core/calculate-total '[1])))
+                           '(println "skip")))]
+        findings (analyze/analyze-forms forms
+                                        {:sut (sut-for 'myapp.partial-dispatch-if-test #{'myapp.core})
+                                         :project-ctx project-ctx})]
+    (is (= 1 (count findings)))
+    (is (= :conditional-assertion (:verdict (first findings))))))
+
+(deftest classifies-runtime-dotimes-as-conditional
+  (let [forms [(list 'ns 'myapp.runtime-dotimes-test
+                      (list :require '[clojure.test :refer [deftest is]]
+                            '[myapp.core :as core]))
+               (list 'deftest 'dynamic-count
+                     (list 'let '[n 2]
+                           (list 'dotimes '[i 'n]
+                                 (list 'is (list '= 1 (list 'core/calculate-total (list 'inc 'i)))))))]
+        findings (analyze/analyze-forms forms
+                                        {:sut (sut-for 'myapp.runtime-dotimes-test #{'myapp.core})
+                                         :project-ctx project-ctx})]
+    (is (= 1 (count findings)))
+    (is (= :conditional-assertion (:verdict (first findings))))))
+
+(deftest classifies-large-literal-dotimes-as-conditional
+  (let [forms [(list 'ns 'myapp.large-dotimes-test
+                      (list :require '[clojure.test :refer [deftest is]]
+                            '[myapp.core :as core]))
+               (list 'deftest 'too-many-iterations
+                     (list 'dotimes '[i 33]
+                           (list 'is (list '= 1 (list 'core/calculate-total (list 'inc 'i))))))]
+        findings (analyze/analyze-forms forms
+                                        {:sut (sut-for 'myapp.large-dotimes-test #{'myapp.core})
+                                         :project-ctx project-ctx})]
+    (is (= 1 (count findings)))
+    (is (= :conditional-assertion (:verdict (first findings))))))
+
+(deftest classifies-do-branch-dispatch-if-as-extroverted
+  (let [forms [(list 'ns 'myapp.do-dispatch-if-test
+                      (list :require '[clojure.test :refer [deftest is]]
+                            '[myapp.core :as core]))
+               (list 'deftest 'do-and-assert
+                     (list 'if 'flag
+                           (list 'do
+                                 (list 'is (list '= 1 (list 'core/calculate-total '[1])))
+                                 '(println "setup"))
+                           (list 'is (list '= 2 (list 'core/calculate-total '[1 2])))))]
+        findings (analyze/analyze-forms forms
+                                        {:sut (sut-for 'myapp.do-dispatch-if-test #{'myapp.core})
+                                         :project-ctx project-ctx})]
+    (is (= 1 (count findings)))
+    (is (= :extroverted (:verdict (first findings))))))
+
+(deftest classifies-literal-cond-skips-false-branches-as-extroverted
+  (let [forms [(list 'ns 'myapp.cond-skip-test
+                      (list :require '[clojure.test :refer [deftest is]]
+                            '[myapp.core :as core]))
+               (list 'deftest 'skip-to-true
+                     (list 'cond
+                           false (list 'is (list '= 0 (list 'count '[1])))
+                           false (list 'is (list '= 0 (list 'count '[2])))
+                           true (list 'is (list '= 1 (list 'core/calculate-total '[1])))))]
+        findings (analyze/analyze-forms forms
+                                        {:sut (sut-for 'myapp.cond-skip-test #{'myapp.core})
+                                         :project-ctx project-ctx})]
+    (is (= 1 (count findings)))
+    (is (= :extroverted (:verdict (first findings))))))
+
+(deftest classifies-literal-cond-else-only-as-extroverted
+  (let [forms [(list 'ns 'myapp.cond-else-test
+                      (list :require '[clojure.test :refer [deftest is]]
+                            '[myapp.core :as core]))
+               (list 'deftest 'fallback-branch
+                     (list 'cond
+                           :else (list 'is (list '= 1 (list 'core/calculate-total '[1])))))]
+        findings (analyze/analyze-forms forms
+                                        {:sut (sut-for 'myapp.cond-else-test #{'myapp.core})
+                                         :project-ctx project-ctx})]
+    (is (= 1 (count findings)))
+    (is (= :extroverted (:verdict (first findings))))))
