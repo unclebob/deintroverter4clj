@@ -745,6 +745,43 @@
 (defn- deref-target-syms-in-form [form]
   (into #{} (keep deref-target-sym (collect-deref-forms form))))
 
+(defn- symbols-in-form [form]
+  (loop [stack [form] syms #{}]
+    (if (empty? stack)
+      syms
+      (let [node (peek stack)
+            stack (pop stack)
+            syms (if (symbol? node) (conj syms node) syms)]
+        (recur (into stack (reverse (vec (or (walk-children node) []))))
+               syms)))))
+
+(defn- let-bound-atom-syms [bindings]
+  (into #{} (keep (fn [[k v]]
+                    (when (and (symbol? k) (atom-constructor-form? v))
+                      k))
+                  bindings)))
+
+(defn- symbols-in-form-outside-deref [form]
+  (loop [stack [form] syms #{}]
+    (if (empty? stack)
+      syms
+      (let [node (peek stack)
+            stack (pop stack)
+            syms (if (symbol? node) (conj syms node) syms)
+            children (if (deref-form? node)
+                       []
+                       (or (walk-children node) []))]
+        (recur (into stack (reverse (vec children))) syms)))))
+
+(defn- sut-call-mutation-atoms [form bindings]
+  (let [atom-syms (let-bound-atom-syms bindings)]
+    (into (clojure.set/intersection atom-syms (symbols-in-form-outside-deref form))
+          (mapcat (fn [sym]
+                    (when (contains? bindings sym)
+                      (clojure.set/intersection atom-syms
+                                                (symbols-in-form (get bindings sym)))))
+                  (symbols-in-form form)))))
+
 (defn- atom-mutation-target-sym [form]
   (when (and (seq? form) (<= 2 (count form)))
     (let [head (first form) target (second form)]
@@ -777,11 +814,14 @@
 
 (defn- advance-walk-state [form bindings trace-ctx walk-state]
   (let [sut? (form-reaches-sut? form bindings trace-ctx)
-        spy-captures (when sut? (spy-atoms-written-in-form form bindings))]
+        spy-captures (when sut? (spy-atoms-written-in-form form bindings))
+        mutation-atoms (when sut? (sut-call-mutation-atoms form bindings))]
     (cond-> (assoc walk-state :preceding form)
       sut? (assoc :seen-sut? true :last-sut-call form)
       (seq spy-captures)
-      (update :stub-capture-atoms (fnil into #{}) spy-captures))))
+      (update :stub-capture-atoms (fnil into #{}) spy-captures)
+      (seq mutation-atoms)
+      (update :sut-mutation-atoms (fnil into #{}) mutation-atoms))))
 
 (defn- wiring-sut-call [walk-state bindings trace-ctx]
   (let [{:keys [last-sut-call preceding]} walk-state]
@@ -814,6 +854,16 @@
       (when (some #(sut-atom-deref-target? % bindings trace-ctx)
                   (deref-target-syms-in-form asserted-form))
         :sut-atom-read))))
+
+(defn- world-atom-readback-evidence [asserted-form bindings trace-ctx walk-state]
+  (when (= :introverted (:verdict (trace/trace-form asserted-form bindings trace-ctx)))
+    (when (and (:seen-sut? walk-state)
+               (wiring-sut-call walk-state bindings trace-ctx)
+               (seq (:sut-mutation-atoms walk-state)))
+      (when (some #(and (atom-bound-sym? bindings %)
+                        (contains? (:sut-mutation-atoms walk-state) %))
+                  (deref-target-syms-in-form asserted-form))
+        :world-atom-readback))))
 
 (defn- wiring-capture-evidence [asserted-form bindings trace-ctx walk-state]
   (when (= :introverted (:verdict (trace/trace-form asserted-form bindings trace-ctx)))
@@ -881,6 +931,7 @@
   [asserted-form bindings trace-ctx walk-state]
   (when (= :introverted (:verdict (trace/trace-form asserted-form bindings trace-ctx)))
     (or (sut-atom-read-evidence asserted-form bindings trace-ctx walk-state)
+        (world-atom-readback-evidence asserted-form bindings trace-ctx walk-state)
         (when (immediate-preceding-sut? asserted-form bindings trace-ctx (:preceding walk-state))
           :immediate-preceding-sut)
         (when (and (:seen-sut? walk-state)
@@ -893,7 +944,7 @@
         {:keys [preceding]} walk-state
         sut-call (wiring-sut-call walk-state bindings trace-ctx)
         trace-target (case evidence
-                       :sut-atom-read sut-call
+                       (:sut-atom-read :world-atom-readback) sut-call
                        :immediate-preceding-sut preceding
                        :test-state-binding asserted-form
                        assertion-form)]
@@ -903,7 +954,7 @@
       :trace (cond-> (trace/explain-trace trace-target bindings trace-ctx)
                true (assoc :assertion-form assertion-form
                            :side-effect-evidence evidence)
-               (and sut-call (#{:sut-atom-read :immediate-preceding-sut} evidence))
+               (and sut-call (#{:sut-atom-read :world-atom-readback :immediate-preceding-sut} evidence))
                (assoc :preceding-sut-call sut-call))}
      cctx)))
 
@@ -936,7 +987,7 @@
      :bindings (cond-> new-bindings unsupported? (assoc :destructuring? true))}))
 
 (def ^:private walk-state-keys
-  [:preceding :seen-sut? :stub-capture-atoms :last-sut-call])
+  [:preceding :seen-sut? :stub-capture-atoms :last-sut-call :sut-mutation-atoms])
 
 (defn- noop-step [walk-state]
   (select-keys walk-state walk-state-keys))
@@ -949,11 +1000,12 @@
 (defn- result-step [walk-state results]
   (assoc (noop-step walk-state) :results results))
 
-(defn- fresh-walk-state [{:keys [seen-sut? stub-capture-atoms last-sut-call]}]
+(defn- fresh-walk-state [{:keys [seen-sut? stub-capture-atoms last-sut-call sut-mutation-atoms]}]
   {:preceding nil
    :seen-sut? seen-sut? :done-forms []
    :stub-capture-atoms stub-capture-atoms
-   :last-sut-call last-sut-call})
+   :last-sut-call last-sut-call
+   :sut-mutation-atoms sut-mutation-atoms})
 
 (defn- process-let-step [form bindings walk-state cctx]
   (let [{:keys [body bindings]} (let-bindings form bindings)
@@ -1084,7 +1136,10 @@
 (defn- initial-process-stack [forms bindings preceding seen-sut? cctx]
   [(process-frame {:todo forms
                    :bindings bindings
-                   :ws {:preceding preceding :seen-sut? seen-sut? :done-forms []}
+                   :ws {:preceding preceding
+                        :seen-sut? seen-sut?
+                        :done-forms []
+                        :sut-mutation-atoms #{}}
                    :cctx cctx})])
 
 (defn- finished-frame-result [frame results]

@@ -26,3 +26,11 @@
 (defn write-text-file [path content]
   (spit path content))
 
+(defn update-world-fn [world]
+  (fn [updater]
+    (swap! world updater)))
+
+(defn mark-major-invasion! [ctx path contents]
+  ((:update-game-map! ctx)
+   #(assoc-in % path (assoc contents :major-invasion true))))
+
