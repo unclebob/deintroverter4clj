@@ -415,6 +415,39 @@
     (is (= 1 (count findings)))
     (is (= :conditional-assertion (:verdict (first findings))))))
 
+(deftest classifies-describe-local-defn-helper-as-extroverted
+  (let [forms [(list 'ns 'myapp.helper-test
+                      (list :require '[clojure.test :refer [deftest is]]
+                            '[myapp.core :as core]))
+               (list 'describe 'helpers
+                     (list 'defn 'with-setup '[f]
+                           (list 'f 42))
+                     (list 'it 'uses-local-helper
+                           (list 'with-setup
+                                 (list 'fn '[n]
+                                       (list 'is (list '= 1 (list 'core/calculate-total (list 'n))))))))]
+        finding (first (analyze/analyze-forms forms
+                                              {:sut (sut-for 'myapp.helper-test #{'myapp.core})
+                                               :project-ctx project-ctx}))]
+    (is (= :extroverted (:verdict finding)))))
+
+(deftest classifies-nested-describe-helpers-as-extroverted
+  (let [forms [(list 'ns 'myapp.nested-helper-test
+                      (list :require '[clojure.test :refer [deftest is]]
+                            '[myapp.core :as core]))
+               (list 'describe 'outer
+                     (list 'defn 'outer-setup '[f]
+                           (list 'f 42))
+                     (list 'describe 'inner
+                           (list 'it 'uses-outer-helper
+                                 (list 'outer-setup
+                                       (list 'fn '[n]
+                                             (list 'is (list '= 1 (list 'core/calculate-total (list 'n)))))))))]
+        finding (first (analyze/analyze-forms forms
+                                              {:sut (sut-for 'myapp.nested-helper-test #{'myapp.core})
+                                               :project-ctx project-ctx}))]
+    (is (= :extroverted (:verdict finding)))))
+
 (deftest reports-missing-doseq-guard-cause
   (let [forms [(list 'ns 'myapp.unguarded-doseq-test
                       (list :require '[clojure.test :refer [deftest is]]
