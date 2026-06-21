@@ -640,11 +640,6 @@
   (or (sut-invoke-form? form bindings trace-ctx)
       (trace/reaches-sut-likely? form bindings trace-ctx)))
 
-(defn- advance-walk-state [form bindings trace-ctx walk-state]
-  (cond-> (assoc walk-state :preceding form)
-    (form-reaches-sut? form bindings trace-ctx)
-    (assoc :seen-sut? true :last-sut-call form)))
-
 (def ^:private underlying-conditional-reasons
   {:extroverted :would-be-extroverted
    :likely-extroverted :would-be-likely-extroverted})
@@ -718,8 +713,37 @@
 (defn- deref-target-sym [form]
   (when (and (seq? form) (= 2 (count form)))
     (let [head (first form) arg (second form)]
-      (when (and (#{'deref 'clojure.core/deref} head) (symbol? arg))
-        arg))))
+      (when (#{'deref 'clojure.core/deref} head)
+        (cond
+          (symbol? arg) arg
+          (and (seq? arg) (= 'var (first arg)) (symbol? (second arg))) (second arg)
+          :else nil)))))
+
+(defn- walk-children [node]
+  (cond
+    (map? node) (vals node)
+    (vector? node) (seq node)
+    (seq? node) (seq node)
+    :else nil))
+
+(defn- deref-form? [form]
+  (and (seq? form) (= 2 (count form))
+       (#{'deref 'clojure.core/deref} (first form))))
+
+(defn- collect-deref-forms [form]
+  (loop [stack [form] derefs []]
+    (if (empty? stack)
+      derefs
+      (let [node (peek stack)
+            stack (pop stack)]
+        (if (deref-form? node)
+          (recur (into stack (reverse (vec (or (walk-children node) []))))
+                 (conj derefs node))
+          (recur (into stack (reverse (vec (or (walk-children node) []))))
+                 derefs))))))
+
+(defn- deref-target-syms-in-form [form]
+  (into #{} (keep deref-target-sym (collect-deref-forms form))))
 
 (defn- atom-mutation-target-sym [form]
   (when (and (seq? form) (<= 2 (count form)))
@@ -731,10 +755,11 @@
 (defn- atom-syms-written-in-form [form]
   (cond
     (nil? form) #{}
+    (map? form) (into #{} (mapcat atom-syms-written-in-form (vals form)))
+    (vector? form) (into #{} (mapcat atom-syms-written-in-form form))
     (seq? form)
     (into (or (when-let [sym (atom-mutation-target-sym form)] #{sym}) #{})
           (mapcat atom-syms-written-in-form form))
-
     :else #{}))
 
 (defn- stub-capture-atoms-from-redefs [redefs-bindings]
@@ -745,6 +770,18 @@
                 acc))
             #{}
             (partition 2 redefs-bindings))))
+
+(defn- spy-atoms-written-in-form [form bindings]
+  (set (filter #(atom-bound-sym? bindings %)
+               (atom-syms-written-in-form form))))
+
+(defn- advance-walk-state [form bindings trace-ctx walk-state]
+  (let [sut? (form-reaches-sut? form bindings trace-ctx)
+        spy-captures (when sut? (spy-atoms-written-in-form form bindings))]
+    (cond-> (assoc walk-state :preceding form)
+      sut? (assoc :seen-sut? true :last-sut-call form)
+      (seq spy-captures)
+      (update :stub-capture-atoms (fnil into #{}) spy-captures))))
 
 (defn- wiring-sut-call [walk-state bindings trace-ctx]
   (let [{:keys [last-sut-call preceding]} walk-state]
@@ -757,15 +794,35 @@
 
       :else nil)))
 
+(defn- wiring-spy-atom-sym [asserted-form bindings walk-state]
+  (some (fn [sym]
+          (when (and (atom-bound-sym? bindings sym)
+                     (contains? (:stub-capture-atoms walk-state) sym))
+            sym))
+        (deref-target-syms-in-form asserted-form)))
+
+(defn- sut-atom-deref-target? [sym bindings trace-ctx]
+  (and (symbol? sym)
+       (not (contains? bindings sym))
+       (not (atom-bound-sym? bindings sym))
+       (trace/reaches-sut? (list 'clojure.core/deref sym) bindings trace-ctx)))
+
+(defn- sut-atom-read-evidence [asserted-form bindings trace-ctx walk-state]
+  (when (= :introverted (:verdict (trace/trace-form asserted-form bindings trace-ctx)))
+    (when (and (:seen-sut? walk-state)
+               (wiring-sut-call walk-state bindings trace-ctx))
+      (when (some #(sut-atom-deref-target? % bindings trace-ctx)
+                  (deref-target-syms-in-form asserted-form))
+        :sut-atom-read))))
+
 (defn- wiring-capture-evidence [asserted-form bindings trace-ctx walk-state]
   (when (= :introverted (:verdict (trace/trace-form asserted-form bindings trace-ctx)))
     (when (and (:seen-sut? walk-state)
                (seq (:stub-capture-atoms walk-state))
-               (wiring-sut-call walk-state bindings trace-ctx))
-      (when-let [atom-sym (deref-target-sym asserted-form)]
-        (when (and (atom-bound-sym? bindings atom-sym)
-                   (contains? (:stub-capture-atoms walk-state) atom-sym))
-          :stub-capture)))))
+               (wiring-sut-call walk-state bindings trace-ctx)
+               (not (sut-atom-read-evidence asserted-form bindings trace-ctx walk-state)))
+      (when (wiring-spy-atom-sym asserted-form bindings walk-state)
+        :stub-capture))))
 
 (defn- wiring-assertion-result
   [assertion-form asserted-form bindings trace-ctx walk-state cctx]
@@ -821,18 +878,22 @@
      cctx)))
 
 (defn- side-effect-evidence
-  [asserted-form bindings trace-ctx {:keys [preceding seen-sut?]}]
+  [asserted-form bindings trace-ctx walk-state]
   (when (= :introverted (:verdict (trace/trace-form asserted-form bindings trace-ctx)))
-    (or (when (immediate-preceding-sut? asserted-form bindings trace-ctx preceding)
+    (or (sut-atom-read-evidence asserted-form bindings trace-ctx walk-state)
+        (when (immediate-preceding-sut? asserted-form bindings trace-ctx (:preceding walk-state))
           :immediate-preceding-sut)
-        (when (and seen-sut? (trace/binding-from-test-module? bindings trace-ctx))
+        (when (and (:seen-sut? walk-state)
+                   (trace/binding-from-test-module? bindings trace-ctx))
           :test-state-binding))))
 
 (defn- side-effect-assertion-result
   [assertion-form asserted-form bindings trace-ctx walk-state cctx]
   (let [evidence (side-effect-evidence asserted-form bindings trace-ctx walk-state)
         {:keys [preceding]} walk-state
+        sut-call (wiring-sut-call walk-state bindings trace-ctx)
         trace-target (case evidence
+                       :sut-atom-read sut-call
                        :immediate-preceding-sut preceding
                        :test-state-binding asserted-form
                        assertion-form)]
@@ -842,8 +903,8 @@
       :trace (cond-> (trace/explain-trace trace-target bindings trace-ctx)
                true (assoc :assertion-form assertion-form
                            :side-effect-evidence evidence)
-               (= :immediate-preceding-sut evidence)
-               (assoc :preceding-sut-call preceding))}
+               (and sut-call (#{:sut-atom-read :immediate-preceding-sut} evidence))
+               (assoc :preceding-sut-call sut-call))}
      cctx)))
 
 (defn- build-finding-trace [trace-ctx sut assertion-results]
@@ -941,6 +1002,12 @@
         (assoc (select-keys advanced walk-state-keys)
                :results [(wiring-assertion-result form (:asserted-form parsed) bindings
                                                    trace-ctx walk-state cctx)]))
+
+      (sut-atom-read-evidence (:asserted-form parsed) bindings trace-ctx walk-state)
+      (let [advanced (advance-walk-state form bindings trace-ctx walk-state)]
+        (assoc (select-keys advanced walk-state-keys)
+               :results [(side-effect-assertion-result form (:asserted-form parsed) bindings
+                                                        trace-ctx walk-state cctx)]))
 
       (file-dependency-evidence (:asserted-form parsed) bindings trace-ctx walk-state)
       (let [advanced (advance-walk-state form bindings trace-ctx walk-state)]

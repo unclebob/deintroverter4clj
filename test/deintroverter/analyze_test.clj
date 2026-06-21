@@ -85,6 +85,25 @@
     (is (= :introverted (:verdict (second findings))))
     (is (= :no-sut-assertion (:reason (second findings))))))
 
+(deftest classifies-callback-spy-wiring-as-likely-extroverted
+  (let [findings (analyze "callback_spy_wiring.clj" 'myapp.callback-spy-wiring-spec #{'myapp.core})]
+    (is (= 1 (count findings)))
+    (is (= :likely-extroverted (:verdict (first findings))))
+    (is (= :sut-wiring-heuristic (:reason (first findings))))
+    (is (= :stub-capture (get-in (first findings) [:trace :assertions 0 :wiring-evidence])))))
+
+(deftest classifies-nested-spy-wiring-as-likely-extroverted
+  (let [findings (analyze "nested_spy_wiring.clj" 'myapp.nested-spy-wiring-spec #{'myapp.core})]
+    (is (= 1 (count findings)))
+    (is (= :likely-extroverted (:verdict (first findings))))
+    (is (= :sut-wiring-heuristic (:reason (first findings))))))
+
+(deftest classifies-sut-defined-atom-reads-as-extroverted-not-wiring
+  (let [findings (analyze "sut_atom_side_effect.clj" 'myapp.sut-atom-side-effect-spec #{'myapp.core})]
+    (is (= 3 (count findings)))
+    (is (every? #(= :extroverted (:verdict %)) findings))
+    (is (every? #(nil? (get-in % [:trace :assertions 0 :wiring-evidence])) findings))))
+
 (deftest classifies-file-dependency-as-likely-extroverted
   (let [findings (analyze "file_dependency.clj" 'myapp.file-dependency-spec #{'myapp.core})]
     (is (= 2 (count findings)))

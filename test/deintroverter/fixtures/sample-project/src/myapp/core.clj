@@ -1,5 +1,14 @@
 (ns myapp.core)
 
+(defonce process-state (atom nil))
+
+(defn process [x]
+  (reset! process-state x)
+  x)
+
+(defn run-with-handler [handler x]
+  (handler x))
+
 (defn calculate-total [items]
   (count items))
 
