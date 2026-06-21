@@ -238,11 +238,60 @@
 (defn- flattenable-doseq-coll? [coll-expr bindings]
   (vector? (doseq-coll coll-expr bindings)))
 
-(defn- doseq-body-depth [coll-expr bindings done-forms conditional-depth]
-  (if (or (flattenable-doseq-coll? coll-expr bindings)
-          (preceded-by-non-empty-guard? done-forms coll-expr))
-    conditional-depth
-    (inc conditional-depth)))
+(def ^:private empty-cctx {:depth 0 :causes []})
+
+(defn- ctx-depth [cctx] (:depth cctx 0))
+
+(defn- push-cctx-cause [cctx cause context]
+  {:depth (inc (ctx-depth cctx))
+   :causes (conj (:causes cctx []) {:cause cause :context context})})
+
+(defn- innermost-cctx-cause [cctx]
+  (when (pos? (ctx-depth cctx))
+    (last (:causes cctx))))
+
+(defn- symbol-in-form? [sym form]
+  (cond
+    (= form sym) true
+    (seq? form) (boolean (some #(symbol-in-form? sym %) form))
+    :else false))
+
+(defn- near-doseq-guard? [done-forms coll-expr]
+  (when (symbol? coll-expr)
+    (boolean
+     (some (fn [form]
+             (and (assertion-form? form)
+                  (not (non-empty-guard-assertion? form coll-expr))
+                  (symbol-in-form? coll-expr form)))
+           (take-last 2 done-forms)))))
+
+(defn- doseq-conditional-cctx [coll-expr bindings done-forms cctx]
+  (cond
+    (or (flattenable-doseq-coll? coll-expr bindings)
+        (preceded-by-non-empty-guard? done-forms coll-expr))
+    cctx
+
+    (symbol? coll-expr)
+    (push-cctx-cause cctx
+                     (if (near-doseq-guard? done-forms coll-expr)
+                       :near-doseq-guard
+                       :missing-doseq-guard)
+                     {:head 'doseq :coll coll-expr})
+
+    :else
+    (push-cctx-cause cctx :non-flattenable-doseq {:head 'doseq :coll coll-expr})))
+
+(defn- partial-dispatch-if? [form]
+  (when (and (seq? form) (= 'if (first form)))
+    (let [[_ _ then else] form
+          then-a (contains-assertion? then)
+          else-a (contains-assertion? else)]
+      (and (or then-a else-a) (not (and then-a else-a))))))
+
+(defn- runtime-conditional-cause [form]
+  (if (partial-dispatch-if? form)
+    {:cause :partial-dispatch-if :context {:head 'if}}
+    {:cause :runtime-conditional :context {:head (first form)}}))
 
 (defn- reducible-cond-step [test branches remaining]
   (cond
@@ -362,8 +411,8 @@
 (declare process-forms-sequential)
 
 (defn- process-frame
-  [{:keys [todo bindings ws cd resume complete]}]
-  {:todo (seq todo) :bindings bindings :ws ws :cd cd :resume resume :complete complete})
+  [{:keys [todo bindings ws cctx resume complete]}]
+  {:todo (seq todo) :bindings bindings :ws ws :cctx cctx :resume resume :complete complete})
 
 (defn- complete-preceding [{:keys [ws resume complete]}]
   (get {:child (:preceding ws)
@@ -390,14 +439,18 @@
 (defn- resume-parent-frame [stack child-frame]
   (-> stack pop (conj (assoc (:resume child-frame) :ws (complete-child-ws child-frame)))))
 
-(defn- process-conditional-step [form bindings _trace-ctx walk-state conditional-depth]
+(defn- process-conditional-step [form bindings _trace-ctx walk-state cctx]
   (when-let [branches (or (reducible-conditional-branches form)
                           (conditional-branch-forms form))]
-    (let [reducible? (boolean (reducible-conditional-branches form))]
+    (let [reducible? (boolean (reducible-conditional-branches form))
+          child-cctx (if reducible?
+                       cctx
+                       (let [{:keys [cause context]} (runtime-conditional-cause form)]
+                         (push-cctx-cause cctx cause context)))]
       {:child {:todo branches
                :bindings bindings
                :ws (assoc walk-state :done-forms [])
-               :cd (if reducible? conditional-depth (inc conditional-depth))
+               :cctx child-cctx
                :complete {:preceding :resume :seen-sut? :child}}
        :results []
        :preceding (:preceding walk-state)
@@ -408,7 +461,7 @@
 (defn- flattenable-dotimes-count? [n-expr]
   (and (number? n-expr) (pos? n-expr) (<= n-expr max-flattened-dotimes)))
 
-(defn- process-dotimes [form bindings trace-ctx conditional-depth]
+(defn- process-dotimes [form bindings trace-ctx cctx]
   (when (and (>= (count form) 3) (vector? (second form)))
     (let [[sym n-expr] (second form)
           body (drop 2 form)]
@@ -417,46 +470,48 @@
                   (process-forms body
                                  (if (symbol? sym) (assoc bindings sym i) bindings)
                                  trace-ctx
-                                 conditional-depth))
+                                 cctx))
                 (range n-expr))
-        (process-forms body bindings trace-ctx (inc conditional-depth))))))
+        (process-forms body bindings trace-ctx
+                       (push-cctx-cause cctx :runtime-dotimes {:head 'dotimes :count n-expr}))))))
 
-(defn- process-dotimes-step [form bindings trace-ctx walk-state conditional-depth]
+(defn- process-dotimes-step [form bindings trace-ctx walk-state cctx]
   (when (and (>= (count form) 3) (vector? (second form)))
     (let [[sym n-expr] (second form)
           flattened? (flattenable-dotimes-count? n-expr)]
       (if flattened?
-        {:results (vec (process-dotimes form bindings trace-ctx conditional-depth))
+        {:results (vec (process-dotimes form bindings trace-ctx cctx))
          :preceding (:preceding walk-state)
          :seen-sut? (:seen-sut? walk-state)}
         {:child {:todo (drop 2 form)
                  :bindings (if (symbol? sym) (assoc bindings sym 0) bindings)
                  :ws (assoc walk-state :done-forms [])
-                 :cd (inc conditional-depth)
+                 :cctx (push-cctx-cause cctx :runtime-dotimes {:head 'dotimes :count n-expr})
                  :complete {:preceding :resume :seen-sut? :child}}
          :results []
          :preceding (:preceding walk-state)
          :seen-sut? (:seen-sut? walk-state)}))))
 
-(defn- process-doseq [form bindings trace-ctx conditional-depth walk-state]
+(defn- process-doseq [form bindings trace-ctx cctx walk-state]
   (let [binding-form (second form)
         body (drop 2 form)
         done-forms (:done-forms walk-state [])]
     (if-not (and (vector? binding-form) (= 2 (count binding-form)))
-      (process-forms body bindings trace-ctx (inc conditional-depth))
+      (process-forms body bindings trace-ctx
+                     (push-cctx-cause cctx :malformed-doseq {:head 'doseq}))
       (let [[bind-expr coll-expr] binding-form
-            body-depth (doseq-body-depth coll-expr bindings done-forms conditional-depth)
+            body-cctx (doseq-conditional-cctx coll-expr bindings done-forms cctx)
             coll (doseq-coll coll-expr bindings)]
         (if (vector? coll)
           (mapcat (fn [item]
                     (process-forms body
                                    (bindings-for-doseq-item bind-expr item bindings)
                                    trace-ctx
-                                   body-depth))
+                                   body-cctx))
                   coll)
-          (process-forms body bindings trace-ctx body-depth))))))
+          (process-forms body bindings trace-ctx body-cctx))))))
 
-(defn- process-fn-invoke-step [form bindings _trace-ctx walk-state conditional-depth]
+(defn- process-fn-invoke-step [form bindings _trace-ctx walk-state cctx]
   (when (and (seq? form) (symbol? (first form)) (seq (rest form)))
     (when-let [fn-form (get bindings (first form))]
       (when (fn-form? fn-form)
@@ -466,7 +521,7 @@
           {:child {:todo body
                    :bindings new-bindings
                    :ws {:preceding nil :seen-sut? false :done-forms []}
-                   :cd conditional-depth
+                   :cctx cctx
                    :complete {:preceding :resume :seen-sut? :resume}}
            :results []
            :preceding (:preceding walk-state)
@@ -555,47 +610,51 @@
       (and (= verdict :questionable) reason)
       :conditional-assertion))
 
-(defn- as-conditional-assertion [result]
+(defn- as-conditional-assertion [result cctx]
   (let [{:keys [verdict reason trace]} result
-        underlying-reason (conditional-assertion-reason result)]
+        underlying-reason (conditional-assertion-reason result)
+        inner (innermost-cctx-cause cctx)]
     {:verdict :conditional-assertion
      :reason underlying-reason
-     :trace (assoc trace
-                   :conditional? true
-                   :underlying-verdict verdict
-                   :underlying-reason (or reason underlying-reason))}))
+     :trace (cond-> (assoc trace
+                           :conditional? true
+                           :underlying-verdict verdict
+                           :underlying-reason (or reason underlying-reason))
+              inner (assoc :conditional-cause (:cause inner)
+                           :conditional-context (:context inner))
+              (seq (:causes cctx)) (assoc :conditional-causes (:causes cctx)))}))
 
-(defn- finalize-assertion-result [result conditional-depth]
-  (if (and result (pos? conditional-depth))
-    (as-conditional-assertion result)
+(defn- finalize-assertion-result [result cctx]
+  (if (and result (pos? (ctx-depth cctx)))
+    (as-conditional-assertion result cctx)
     result))
 
 (defn- assertion-result
-  [form bindings trace-ctx conditional-depth]
+  [form bindings trace-ctx cctx]
   (finalize-assertion-result
    (let [{:keys [verdict reason]} (trace/trace-form form bindings trace-ctx)]
      {:verdict verdict
       :reason reason
       :trace (trace/explain-trace form bindings trace-ctx)})
-   conditional-depth))
+   cctx))
 
 (defn- stub-assertion-result
-  [assertion-form bindings trace-ctx preceding-sut conditional-depth]
+  [assertion-form bindings trace-ctx preceding-sut cctx]
   (finalize-assertion-result
    (let [trace-target (or preceding-sut assertion-form)
          {:keys [verdict reason]} (trace/trace-form trace-target bindings trace-ctx)
          trace (assoc (trace/explain-trace trace-target bindings trace-ctx)
-                        :assertion-form assertion-form
-                        :preceding-sut-call preceding-sut)]
+                      :assertion-form assertion-form
+                      :preceding-sut-call preceding-sut)]
      {:verdict verdict :reason reason :trace trace})
-   conditional-depth))
+   cctx))
 
-(defn- questionable-result [form reason conditional-depth]
+(defn- questionable-result [form reason cctx]
   (finalize-assertion-result
    {:verdict :questionable
     :reason reason
     :trace {:assertion-form form}}
-   conditional-depth))
+   cctx))
 
 (defn- immediate-preceding-sut? [asserted-form bindings trace-ctx preceding]
   (and preceding
@@ -611,7 +670,7 @@
           :test-state-binding))))
 
 (defn- side-effect-assertion-result
-  [assertion-form asserted-form bindings trace-ctx walk-state conditional-depth]
+  [assertion-form asserted-form bindings trace-ctx walk-state cctx]
   (let [evidence (side-effect-evidence asserted-form bindings trace-ctx walk-state)
         {:keys [preceding]} walk-state
         trace-target (case evidence
@@ -626,7 +685,7 @@
                            :side-effect-evidence evidence)
                (= :immediate-preceding-sut evidence)
                (assoc :preceding-sut-call preceding))}
-     conditional-depth)))
+     cctx)))
 
 (defn- build-finding-trace [trace-ctx sut assertion-results]
   {:test-ns (:test-ns trace-ctx)
@@ -659,9 +718,9 @@
 (defn- noop-step [walk-state]
   (select-keys walk-state [:preceding :seen-sut?]))
 
-(defn- child-step [walk-state {:keys [todo bindings ws cd complete]}]
+(defn- child-step [walk-state {:keys [todo bindings ws cctx complete]}]
   (assoc (noop-step walk-state)
-         :child {:todo todo :bindings bindings :ws ws :cd cd :complete complete}
+         :child {:todo todo :bindings bindings :ws ws :cctx cctx :complete complete}
          :results []))
 
 (defn- result-step [walk-state results]
@@ -670,57 +729,57 @@
 (defn- fresh-walk-state [{:keys [seen-sut?]}]
   {:preceding nil :seen-sut? seen-sut? :done-forms []})
 
-(defn- process-let-step [form bindings walk-state conditional-depth]
+(defn- process-let-step [form bindings walk-state cctx]
   (let [{:keys [body bindings]} (let-bindings form bindings)
         {:keys [seen-sut?]} walk-state]
     (child-step walk-state {:todo body
                             :bindings bindings
                             :ws (fresh-walk-state walk-state)
-                            :cd conditional-depth
+                            :cctx cctx
                             :complete {:preceding :resume :seen-sut? :merge-or}})))
 
-(defn- process-seq-child-step [form bindings walk-state conditional-depth complete]
+(defn- process-seq-child-step [form bindings walk-state cctx complete]
   (child-step walk-state {:todo (rest form)
                           :bindings bindings
                           :ws walk-state
-                          :cd conditional-depth
+                          :cctx cctx
                           :complete complete}))
 
-(defn- process-with-redefs-step [form bindings walk-state conditional-depth]
+(defn- process-with-redefs-step [form bindings walk-state cctx]
   (child-step walk-state {:todo (drop 2 form)
                           :bindings bindings
                           :ws (assoc walk-state :done-forms [])
-                          :cd conditional-depth
+                          :cctx cctx
                           :complete {:preceding :child :seen-sut? :child}}))
 
-(defn- process-fn-step [form bindings walk-state conditional-depth]
+(defn- process-fn-step [form bindings walk-state cctx]
   (child-step walk-state {:todo (drop 2 form)
                           :bindings bindings
                           :ws (fresh-walk-state walk-state)
-                          :cd conditional-depth
+                          :cctx cctx
                           :complete {:preceding :resume :seen-sut? :merge-or}}))
 
-(defn- process-parsed-assertion [form parsed bindings trace-ctx walk-state conditional-depth]
+(defn- process-parsed-assertion [form parsed bindings trace-ctx walk-state cctx]
   (let [{:keys [preceding]} walk-state]
     (cond
       (assertions/stub-invocation? parsed)
-      (result-step walk-state [(stub-assertion-result form bindings trace-ctx preceding conditional-depth)])
+      (result-step walk-state [(stub-assertion-result form bindings trace-ctx preceding cctx)])
 
       (:reason parsed)
-      (result-step walk-state [(questionable-result form (:reason parsed) conditional-depth)])
+      (result-step walk-state [(questionable-result form (:reason parsed) cctx)])
 
       (side-effect-evidence (:asserted-form parsed) bindings trace-ctx walk-state)
       (let [advanced (advance-walk-state form bindings trace-ctx walk-state)]
         (assoc (select-keys advanced [:preceding :seen-sut?])
                :results [(side-effect-assertion-result form (:asserted-form parsed) bindings
-                                                        trace-ctx walk-state conditional-depth)]))
+                                                        trace-ctx walk-state cctx)]))
 
       :else
       (let [advanced (advance-walk-state form bindings trace-ctx walk-state)]
         (assoc (select-keys advanced [:preceding :seen-sut?])
-               :results [(assertion-result (:asserted-form parsed) bindings trace-ctx conditional-depth)])))))
+               :results [(assertion-result (:asserted-form parsed) bindings trace-ctx cctx)])))))
 
-(defn- process-default-step [form bindings trace-ctx walk-state conditional-depth]
+(defn- process-default-step [form bindings trace-ctx walk-state cctx]
   (let [advanced (advance-walk-state form bindings trace-ctx walk-state)
         {:keys [seen-sut?]} walk-state]
     (if (form-reaches-sut? form bindings trace-ctx)
@@ -728,23 +787,23 @@
       (child-step advanced {:todo (rest form)
                             :bindings bindings
                             :ws {:preceding nil :seen-sut? seen-sut?}
-                            :cd conditional-depth
+                            :cctx cctx
                             :complete {:preceding (:preceding advanced) :seen-sut? :merge-or}}))))
 
-(defn- process-expression-step [form bindings trace-ctx walk-state conditional-depth]
-  (or (process-conditional-step form bindings trace-ctx walk-state conditional-depth)
-      (process-fn-invoke-step form bindings trace-ctx walk-state conditional-depth)
+(defn- process-expression-step [form bindings trace-ctx walk-state cctx]
+  (or (process-conditional-step form bindings trace-ctx walk-state cctx)
+      (process-fn-invoke-step form bindings trace-ctx walk-state cctx)
       (when-let [parsed (assertions/parse-assertion form)]
-        (process-parsed-assertion form parsed bindings trace-ctx walk-state conditional-depth))
-      (process-default-step form bindings trace-ctx walk-state conditional-depth)))
+        (process-parsed-assertion form parsed bindings trace-ctx walk-state cctx))
+      (process-default-step form bindings trace-ctx walk-state cctx)))
 
 (def ^:private seq-child-complete {:preceding :child :seen-sut? :child})
 
-(defn- process-seq-head [form bindings walk-state conditional-depth]
-  (process-seq-child-step form bindings walk-state conditional-depth seq-child-complete))
+(defn- process-seq-head [form bindings walk-state cctx]
+  (process-seq-child-step form bindings walk-state cctx seq-child-complete))
 
-(defn- process-dotimes-head [form bindings trace-ctx walk-state conditional-depth]
-  (or (process-dotimes-step form bindings trace-ctx walk-state conditional-depth)
+(defn- process-dotimes-head [form bindings trace-ctx walk-state cctx]
+  (or (process-dotimes-step form bindings trace-ctx walk-state cctx)
       (assoc (noop-step walk-state) :results [])))
 
 (def ^:private head-form-steps
@@ -757,28 +816,28 @@
    'with-redefs process-with-redefs-step
    'fn process-fn-step})
 
-(defn- head-form-step [head form bindings trace-ctx walk-state conditional-depth]
+(defn- head-form-step [head form bindings trace-ctx walk-state cctx]
   (cond
     (contains? head-form-steps head)
-    ((get head-form-steps head) form bindings walk-state conditional-depth)
+    ((get head-form-steps head) form bindings walk-state cctx)
 
     (= 'doseq head)
-    (result-step walk-state (process-doseq form bindings trace-ctx conditional-depth walk-state))
+    (result-step walk-state (process-doseq form bindings trace-ctx cctx walk-state))
 
     (= 'dotimes head)
-    (process-dotimes-head form bindings trace-ctx walk-state conditional-depth)))
+    (process-dotimes-head form bindings trace-ctx walk-state cctx)))
 
-(defn- process-one-form [form bindings trace-ctx walk-state conditional-depth]
+(defn- process-one-form [form bindings trace-ctx walk-state cctx]
   (if-not (seq? form)
     (assoc (noop-step walk-state) :results [])
-    (or (head-form-step (first form) form bindings trace-ctx walk-state conditional-depth)
-        (process-expression-step form bindings trace-ctx walk-state conditional-depth))))
+    (or (head-form-step (first form) form bindings trace-ctx walk-state cctx)
+        (process-expression-step form bindings trace-ctx walk-state cctx))))
 
-(defn- initial-process-stack [forms bindings preceding seen-sut? conditional-depth]
+(defn- initial-process-stack [forms bindings preceding seen-sut? cctx]
   [(process-frame {:todo forms
                    :bindings bindings
                    :ws {:preceding preceding :seen-sut? seen-sut? :done-forms []}
-                   :cd conditional-depth})])
+                   :cctx cctx})])
 
 (defn- finished-frame-result [frame results]
   (if (:resume frame)
@@ -800,8 +859,8 @@
        (into results (:results step))])))
 
 (defn- process-forms-sequential
-  [forms bindings trace-ctx preceding seen-sut? conditional-depth]
-   (loop [stack (initial-process-stack forms bindings preceding seen-sut? conditional-depth)
+  [forms bindings trace-ctx preceding seen-sut? cctx]
+   (loop [stack (initial-process-stack forms bindings preceding seen-sut? cctx)
           results []]
      (if (empty? stack)
        {:results results :preceding preceding :seen-sut? seen-sut?}
@@ -815,15 +874,15 @@
                                         (:bindings frame)
                                         trace-ctx
                                         (:ws frame)
-                                        (:cd frame))
+                                        (:cctx frame))
                  [stack' results'] (stack-after-step stack frame step results)]
              (recur stack' results')))))))
 
 (defn- process-forms
   ([forms bindings trace-ctx]
-   (process-forms forms bindings trace-ctx 0))
-  ([forms bindings trace-ctx conditional-depth]
-   (:results (process-forms-sequential forms bindings trace-ctx nil false conditional-depth))))
+   (process-forms forms bindings trace-ctx empty-cctx))
+  ([forms bindings trace-ctx cctx]
+   (:results (process-forms-sequential forms bindings trace-ctx nil false cctx))))
 
 (defn- body-form [body]
   (if (= 1 (count body))
@@ -846,6 +905,20 @@
         (some #{:unknown-assertion-macro :destructuring} reasons)
         (first reasons)
         :conditional-assertion)))
+
+(defn- finding-conditional-cause [results]
+  (let [causes (set (keep #(get-in % [:trace :conditional-cause])
+                          (filter #(= :conditional-assertion (:verdict %)) results)))]
+    (when (= 1 (count causes))
+      (first causes))))
+
+(defn- finding-conditional-context [results cause]
+  (let [contexts (set (keep (fn [r]
+                              (when (= cause (get-in r [:trace :conditional-cause]))
+                                (get-in r [:trace :conditional-context])))
+                            (filter #(= :conditional-assertion (:verdict %)) results)))]
+    (when (= 1 (count contexts))
+      (first contexts))))
 
 (defn- first-unconditional-verdict [unconditional verdict]
   (first (filter #(= verdict (:verdict %)) unconditional)))
@@ -899,16 +972,20 @@
      (for [{:keys [form test-name body line]} tests
            :let [results (vec (process-forms body ns-bindings trace-ctx))
                  {:keys [verdict reason]}
-                 (promote-cloistered (test-verdict results) body {} trace-ctx)]]
-       {:file file-path
-        :line line
-        :test-name (if (string? test-name) test-name (name test-name))
-        :test-form form
-        :verdict verdict
-        :reason reason
-        :sut-namespaces sut
-        :trace (assoc (build-finding-trace trace-ctx sut results)
-                      :test-modules test-modules)}))))
+                 (promote-cloistered (test-verdict results) body {} trace-ctx)
+                 conditional-cause (finding-conditional-cause results)
+                 conditional-context (finding-conditional-context results conditional-cause)]]
+       (cond-> {:file file-path
+                :line line
+                :test-name (if (string? test-name) test-name (name test-name))
+                :test-form form
+                :verdict verdict
+                :reason reason
+                :sut-namespaces sut
+                :trace (assoc (build-finding-trace trace-ctx sut results)
+                              :test-modules test-modules)}
+         conditional-cause (assoc :conditional-cause conditional-cause)
+         conditional-context (assoc :conditional-context conditional-context))))))
 
 (defn analyze-forms
   "Analyze parsed namespace forms. opts: {:sut #{namespace-syms} :project-ctx map}"
@@ -922,5 +999,5 @@
   (findings-for-forms file-path (parse/read-string-all (slurp file-path)) opts))
 
 ;; clj-mutate-manifest-begin
-;; {:version 1, :tested-at "2026-06-21T09:31:31.627962-05:00", :module-hash "-1272593873", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line 5, :hash "-1458326996"} {:id "defn-/resolve-namespaced", :kind "defn-", :line 7, :end-line 11, :hash "1409516810"} {:id "defn-/resolve-unqualified", :kind "defn-", :line 13, :end-line 16, :hash "718817384"} {:id "defn-/resolve-ns-fn", :kind "defn-", :line 18, :end-line 23, :hash "-746974098"} {:id "defn-/destructuring-binding?", :kind "defn-", :line 25, :end-line 26, :hash "361096142"} {:id "form/5/declare", :kind "declare", :line 28, :end-line 28, :hash "-482327639"} {:id "defn-/vector-pattern-element?", :kind "defn-", :line 30, :end-line 31, :hash "-47316605"} {:id "defn-/vector-rest-index", :kind "defn-", :line 33, :end-line 34, :hash "-1649338098"} {:id "defn-/supported-vector-pattern?", :kind "defn-", :line 36, :end-line 43, :hash "-884333589"} {:id "def/map-destructure-keys", :kind "def", :line 45, :end-line 46, :hash "-599467106"} {:id "defn-/symbol-vector?", :kind "defn-", :line 48, :end-line 49, :hash "-1002205516"} {:id "defn-/standard-map-destructure-pattern?", :kind "defn-", :line 51, :end-line 56, :hash "-1501806290"} {:id "defn-/symbol-key-map-pattern?", :kind "defn-", :line 58, :end-line 59, :hash "1266033390"} {:id "defn-/supported-map-pattern?", :kind "defn-", :line 61, :end-line 63, :hash "328629814"} {:id "defn-/supported-destructure-pattern?", :kind "defn-", :line 65, :end-line 67, :hash "575065261"} {:id "defn-/unsupported-destructure-pattern?", :kind "defn-", :line 69, :end-line 71, :hash "820628602"} {:id "defn-/nth-binding", :kind "defn-", :line 73, :end-line 74, :hash "-1561782215"} {:id "defn-/drop-binding", :kind "defn-", :line 76, :end-line 77, :hash "-1024840710"} {:id "defn-/get-binding", :kind "defn-", :line 79, :end-line 80, :hash "120703912"} {:id "defn-/with-or-default", :kind "defn-", :line 82, :end-line 85, :hash "-1669426162"} {:id "form/20/declare", :kind "declare", :line 87, :end-line 87, :hash "176104591"} {:id "defn-/expand-vector-element", :kind "defn-", :line 89, :end-line 92, :hash "2078973933"} {:id "defn-/expand-vector-destructure", :kind "defn-", :line 94, :end-line 107, :hash "427439272"} {:id "defn-/map-lookup-key", :kind "defn-", :line 109, :end-line 110, :hash "223426931"} {:id "defn-/expand-symbol-key-map-destructure", :kind "defn-", :line 112, :end-line 117, :hash "1033180199"} {:id "defn-/bind-map-keys", :kind "defn-", :line 119, :end-line 124, :hash "1252663033"} {:id "defn-/bind-map-entry", :kind "defn-", :line 126, :end-line 132, :hash "55590744"} {:id "defn-/expand-map-destructure", :kind "defn-", :line 134, :end-line 140, :hash "2088334812"} {:id "defn-/expand-destructure-bindings", :kind "defn-", :line 142, :end-line 147, :hash "-866669811"} {:id "defn-/fn-form?", :kind "defn-", :line 149, :end-line 150, :hash "1534401844"} {:id "defn-/fn-param-syms", :kind "defn-", :line 152, :end-line 154, :hash "-1934413924"} {:id "defn-/doseq-coll", :kind "defn-", :line 156, :end-line 160, :hash "990849186"} {:id "form/32/declare", :kind "declare", :line 162, :end-line 162, :hash "-97545983"} {:id "defn-/bindings-for-doseq-item", :kind "defn-", :line 164, :end-line 172, :hash "54363040"} {:id "defn-/literal-true?", :kind "defn-", :line 174, :end-line 174, :hash "-1333819690"} {:id "defn-/literal-false?", :kind "defn-", :line 175, :end-line 175, :hash "-1313096779"} {:id "defn-/assertion-form?", :kind "defn-", :line 177, :end-line 178, :hash "238628140"} {:id "form/37/declare", :kind "declare", :line 180, :end-line 180, :hash "-1596160099"} {:id "defn-/nested-forms-contain-assertion?", :kind "defn-", :line 182, :end-line 183, :hash "-28890695"} {:id "defn-/do-form-contains-assertion?", :kind "defn-", :line 185, :end-line 186, :hash "-947315160"} {:id "defn-/binding-form-contains-assertion?", :kind "defn-", :line 188, :end-line 190, :hash "-1545568470"} {:id "defn-/contains-assertion?", :kind "defn-", :line 192, :end-line 198, :hash "2063853848"} {:id "def/non-empty-coll-heads", :kind "def", :line 200, :end-line 200, :hash "-134423271"} {:id "defn-/non-empty-coll-expr", :kind "defn-", :line 202, :end-line 206, :hash "-1627812733"} {:id "defn-/seq-not-empty-guard?", :kind "defn-", :line 208, :end-line 212, :hash "1190904328"} {:id "defn-/empty?-guard?", :kind "defn-", :line 214, :end-line 218, :hash "226372305"} {:id "defn-/should-be-nil-guard?", :kind "defn-", :line 220, :end-line 221, :hash "654439219"} {:id "defn-/non-empty-guard-assertion?", :kind "defn-", :line 223, :end-line 230, :hash "-981564608"} {:id "defn-/preceded-by-non-empty-guard?", :kind "defn-", :line 232, :end-line 236, :hash "857877616"} {:id "defn-/flattenable-doseq-coll?", :kind "defn-", :line 238, :end-line 239, :hash "-1596735075"} {:id "defn-/doseq-body-depth", :kind "defn-", :line 241, :end-line 245, :hash "-612924070"} {:id "defn-/reducible-cond-step", :kind "defn-", :line 247, :end-line 252, :hash "139656575"} {:id "defn-/reducible-cond-iterate", :kind "defn-", :line 254, :end-line 259, :hash "-1970172388"} {:id "defn-/reducible-cond-branches", :kind "defn-", :line 261, :end-line 269, :hash "-1238061652"} {:id "defn-/reducible-unary-conditional-branches", :kind "defn-", :line 271, :end-line 278, :hash "-596630077"} {:id "defn-/reducible-if-literal-branches", :kind "defn-", :line 280, :end-line 286, :hash "-1652451699"} {:id "defn-/reducible-literal-branches", :kind "defn-", :line 288, :end-line 300, :hash "893460775"} {:id "defn-/dispatch-if-branches", :kind "defn-", :line 302, :end-line 306, :hash "1862463126"} {:id "defn-/reducible-conditional-branches", :kind "defn-", :line 308, :end-line 310, :hash "1365369480"} {:id "def/conditional-head-syms", :kind "def", :line 312, :end-line 314, :hash "-2029598174"} {:id "defn-/cond-branch-forms", :kind "defn-", :line 316, :end-line 323, :hash "724006868"} {:id "defn-/case-branch-forms", :kind "defn-", :line 325, :end-line 332, :hash "1041144653"} {:id "defn-/condp-branch-forms", :kind "defn-", :line 334, :end-line 335, :hash "-292336679"} {:id "defn-/if-branch-forms", :kind "defn-", :line 337, :end-line 339, :hash "-546724505"} {:id "def/conditional-branch-extractors", :kind "def", :line 341, :end-line 355, :hash "-98756298"} {:id "defn-/conditional-branch-forms", :kind "defn-", :line 357, :end-line 360, :hash "1582157075"} {:id "form/66/declare", :kind "declare", :line 362, :end-line 362, :hash "990345103"} {:id "defn-/process-frame", :kind "defn-", :line 364, :end-line 366, :hash "-1618139034"} {:id "defn-/complete-preceding", :kind "defn-", :line 368, :end-line 372, :hash "378913017"} {:id "defn-/complete-seen-sut?", :kind "defn-", :line 374, :end-line 379, :hash "1494113547"} {:id "defn-/complete-child-ws", :kind "defn-", :line 381, :end-line 383, :hash "333210935"} {:id "defn-/push-child-frame", :kind "defn-", :line 385, :end-line 388, :hash "687311338"} {:id "defn-/resume-parent-frame", :kind "defn-", :line 390, :end-line 391, :hash "873158305"} {:id "defn-/process-conditional-step", :kind "defn-", :line 393, :end-line 404, :hash "-865286411"} {:id "def/max-flattened-dotimes", :kind "def", :line 406, :end-line 406, :hash "-2145562049"} {:id "defn-/flattenable-dotimes-count?", :kind "defn-", :line 408, :end-line 409, :hash "1558346506"} {:id "defn-/process-dotimes", :kind "defn-", :line 411, :end-line 422, :hash "274627514"} {:id "defn-/process-dotimes-step", :kind "defn-", :line 424, :end-line 439, :hash "1376313762"} {:id "defn-/process-doseq", :kind "defn-", :line 441, :end-line 457, :hash "-1867398639"} {:id "defn-/process-fn-invoke-step", :kind "defn-", :line 459, :end-line 473, :hash "2041673155"} {:id "defn-/defn-arity-fn-literal", :kind "defn-", :line 475, :end-line 476, :hash "7584441"} {:id "defn-/defn-docstring-fn-literal", :kind "defn-", :line 478, :end-line 479, :hash "-396941995"} {:id "defn-/defn-docstring?", :kind "defn-", :line 481, :end-line 482, :hash "1220406710"} {:id "defn-/defn->fn-literal", :kind "defn-", :line 484, :end-line 490, :hash "-397160554"} {:id "defn-/ns-fn-bindings", :kind "defn-", :line 492, :end-line 497, :hash "656755951"} {:id "defn-/test-line", :kind "defn-", :line 499, :end-line 500, :hash "-1424048643"} {:id "defn-/test-entry", :kind "defn-", :line 502, :end-line 503, :hash "-1272399894"} {:id "defn-/skip-test-form", :kind "defn-", :line 505, :end-line 506, :hash "-242367102"} {:id "defn-/nest-test-forms", :kind "defn-", :line 508, :end-line 509, :hash "-1321991206"} {:id "defn-/collect-test-form", :kind "defn-", :line 511, :end-line 512, :hash "1521910597"} {:id "def/test-form-handlers", :kind "def", :line 514, :end-line 518, :hash "-1760196749"} {:id "defn-/find-tests-step", :kind "defn-", :line 520, :end-line 524, :hash "1864902714"} {:id "defn-/find-tests", :kind "defn-", :line 526, :end-line 531, :hash "722202088"} {:id "defn-/sut-invoke-form?", :kind "defn-", :line 533, :end-line 534, :hash "966618037"} {:id "defn-/form-reaches-sut?", :kind "defn-", :line 536, :end-line 538, :hash "30025062"} {:id "defn-/advance-walk-state", :kind "defn-", :line 540, :end-line 543, :hash "569498286"} {:id "def/underlying-conditional-reasons", :kind "def", :line 545, :end-line 547, :hash "1473226787"} {:id "defn-/introverted-conditional-reason", :kind "defn-", :line 549, :end-line 550, :hash "2062598749"} {:id "defn-/conditional-assertion-reason", :kind "defn-", :line 552, :end-line 556, :hash "1948739796"} {:id "defn-/as-conditional-assertion", :kind "defn-", :line 558, :end-line 566, :hash "1468502162"} {:id "defn-/finalize-assertion-result", :kind "defn-", :line 568, :end-line 571, :hash "-1616844118"} {:id "defn-/assertion-result", :kind "defn-", :line 573, :end-line 580, :hash "1357394087"} {:id "defn-/stub-assertion-result", :kind "defn-", :line 582, :end-line 591, :hash "702825486"} {:id "defn-/questionable-result", :kind "defn-", :line 593, :end-line 598, :hash "266969877"} {:id "defn-/immediate-preceding-sut?", :kind "defn-", :line 600, :end-line 603, :hash "535255210"} {:id "defn-/side-effect-evidence", :kind "defn-", :line 605, :end-line 611, :hash "-1255916380"} {:id "defn-/side-effect-assertion-result", :kind "defn-", :line 613, :end-line 629, :hash "-1239846332"} {:id "defn-/build-finding-trace", :kind "defn-", :line 631, :end-line 636, :hash "377525482"} {:id "defn-/let-binding-pairs", :kind "defn-", :line 638, :end-line 644, :hash "-1105506548"} {:id "defn-/assoc-let-pair", :kind "defn-", :line 646, :end-line 650, :hash "699566064"} {:id "defn-/let-bindings", :kind "defn-", :line 652, :end-line 657, :hash "-161395392"} {:id "defn-/noop-step", :kind "defn-", :line 659, :end-line 660, :hash "-914493725"} {:id "defn-/child-step", :kind "defn-", :line 662, :end-line 665, :hash "230335217"} {:id "defn-/result-step", :kind "defn-", :line 667, :end-line 668, :hash "1574422238"} {:id "defn-/fresh-walk-state", :kind "defn-", :line 670, :end-line 671, :hash "-1613175383"} {:id "defn-/process-let-step", :kind "defn-", :line 673, :end-line 680, :hash "-469142615"} {:id "defn-/process-seq-child-step", :kind "defn-", :line 682, :end-line 687, :hash "1850627445"} {:id "defn-/process-with-redefs-step", :kind "defn-", :line 689, :end-line 694, :hash "1191210674"} {:id "defn-/process-fn-step", :kind "defn-", :line 696, :end-line 701, :hash "-1626752796"} {:id "defn-/process-parsed-assertion", :kind "defn-", :line 703, :end-line 721, :hash "683838359"} {:id "defn-/process-default-step", :kind "defn-", :line 723, :end-line 732, :hash "719800108"} {:id "defn-/process-expression-step", :kind "defn-", :line 734, :end-line 739, :hash "123233305"} {:id "def/seq-child-complete", :kind "def", :line 741, :end-line 741, :hash "-1727835598"} {:id "defn-/process-seq-head", :kind "defn-", :line 743, :end-line 744, :hash "-1615335996"} {:id "defn-/process-dotimes-head", :kind "defn-", :line 746, :end-line 748, :hash "-2036225986"} {:id "def/head-form-steps", :kind "def", :line 750, :end-line 758, :hash "302488026"} {:id "defn-/head-form-step", :kind "defn-", :line 760, :end-line 769, :hash "-1343671084"} {:id "defn-/process-one-form", :kind "defn-", :line 771, :end-line 775, :hash "-2079314240"} {:id "defn-/initial-process-stack", :kind "defn-", :line 777, :end-line 781, :hash "539471210"} {:id "defn-/finished-frame-result", :kind "defn-", :line 783, :end-line 788, :hash "1782626509"} {:id "defn-/stack-after-step", :kind "defn-", :line 790, :end-line 800, :hash "-1558795323"} {:id "defn-/process-forms-sequential", :kind "defn-", :line 802, :end-line 820, :hash "-1610871595"} {:id "defn-/process-forms", :kind "defn-", :line 822, :end-line 826, :hash "-420498085"} {:id "defn-/body-form", :kind "defn-", :line 828, :end-line 831, :hash "576180413"} {:id "defn-/promote-cloistered", :kind "defn-", :line 833, :end-line 837, :hash "1925045456"} {:id "defn-/unconditional-assertion-results", :kind "defn-", :line 839, :end-line 840, :hash "-1229852895"} {:id "defn-/strongest-conditional-reason", :kind "defn-", :line 842, :end-line 848, :hash "859083910"} {:id "defn-/first-unconditional-verdict", :kind "defn-", :line 850, :end-line 851, :hash "-652872454"} {:id "defn-/extroverted-verdict", :kind "defn-", :line 853, :end-line 855, :hash "-2036952518"} {:id "defn-/likely-extroverted-verdict", :kind "defn-", :line 857, :end-line 860, :hash "-501801606"} {:id "defn-/questionable-verdict", :kind "defn-", :line 862, :end-line 864, :hash "566982830"} {:id "defn-/introverted-verdict", :kind "defn-", :line 866, :end-line 868, :hash "1774438313"} {:id "defn-/unconditional-verdict", :kind "defn-", :line 870, :end-line 874, :hash "1145335451"} {:id "defn-/test-verdict", :kind "defn-", :line 876, :end-line 881, :hash "2043168710"} {:id "defn-/findings-for-forms", :kind "defn-", :line 883, :end-line 911, :hash "391708565"} {:id "defn/analyze-forms", :kind "defn", :line 913, :end-line 916, :hash "-169972165"} {:id "defn/analyze-file", :kind "defn", :line 918, :end-line 922, :hash "1315649154"}]}
+;; {:version 1, :tested-at "2026-06-21T09:46:57.506188-05:00", :module-hash "-1196436252", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line 5, :hash "-1458326996"} {:id "defn-/resolve-namespaced", :kind "defn-", :line 7, :end-line 11, :hash "1409516810"} {:id "defn-/resolve-unqualified", :kind "defn-", :line 13, :end-line 16, :hash "718817384"} {:id "defn-/resolve-ns-fn", :kind "defn-", :line 18, :end-line 23, :hash "-746974098"} {:id "defn-/destructuring-binding?", :kind "defn-", :line 25, :end-line 26, :hash "361096142"} {:id "form/5/declare", :kind "declare", :line 28, :end-line 28, :hash "-482327639"} {:id "defn-/vector-pattern-element?", :kind "defn-", :line 30, :end-line 31, :hash "-47316605"} {:id "defn-/vector-rest-index", :kind "defn-", :line 33, :end-line 34, :hash "-1649338098"} {:id "defn-/supported-vector-pattern?", :kind "defn-", :line 36, :end-line 43, :hash "-884333589"} {:id "def/map-destructure-keys", :kind "def", :line 45, :end-line 46, :hash "-599467106"} {:id "defn-/symbol-vector?", :kind "defn-", :line 48, :end-line 49, :hash "-1002205516"} {:id "defn-/standard-map-destructure-pattern?", :kind "defn-", :line 51, :end-line 56, :hash "-1501806290"} {:id "defn-/symbol-key-map-pattern?", :kind "defn-", :line 58, :end-line 59, :hash "1266033390"} {:id "defn-/supported-map-pattern?", :kind "defn-", :line 61, :end-line 63, :hash "328629814"} {:id "defn-/supported-destructure-pattern?", :kind "defn-", :line 65, :end-line 67, :hash "575065261"} {:id "defn-/unsupported-destructure-pattern?", :kind "defn-", :line 69, :end-line 71, :hash "820628602"} {:id "defn-/nth-binding", :kind "defn-", :line 73, :end-line 74, :hash "-1561782215"} {:id "defn-/drop-binding", :kind "defn-", :line 76, :end-line 77, :hash "-1024840710"} {:id "defn-/get-binding", :kind "defn-", :line 79, :end-line 80, :hash "120703912"} {:id "defn-/with-or-default", :kind "defn-", :line 82, :end-line 85, :hash "-1669426162"} {:id "form/20/declare", :kind "declare", :line 87, :end-line 87, :hash "176104591"} {:id "defn-/expand-vector-element", :kind "defn-", :line 89, :end-line 92, :hash "2078973933"} {:id "defn-/expand-vector-destructure", :kind "defn-", :line 94, :end-line 107, :hash "427439272"} {:id "defn-/map-lookup-key", :kind "defn-", :line 109, :end-line 110, :hash "223426931"} {:id "defn-/expand-symbol-key-map-destructure", :kind "defn-", :line 112, :end-line 117, :hash "1033180199"} {:id "defn-/bind-map-keys", :kind "defn-", :line 119, :end-line 124, :hash "1252663033"} {:id "defn-/bind-map-entry", :kind "defn-", :line 126, :end-line 132, :hash "55590744"} {:id "defn-/expand-map-destructure", :kind "defn-", :line 134, :end-line 140, :hash "2088334812"} {:id "defn-/expand-destructure-bindings", :kind "defn-", :line 142, :end-line 147, :hash "-866669811"} {:id "defn-/fn-form?", :kind "defn-", :line 149, :end-line 150, :hash "1534401844"} {:id "defn-/fn-param-syms", :kind "defn-", :line 152, :end-line 154, :hash "-1934413924"} {:id "defn-/doseq-coll", :kind "defn-", :line 156, :end-line 160, :hash "990849186"} {:id "form/32/declare", :kind "declare", :line 162, :end-line 162, :hash "-97545983"} {:id "defn-/bindings-for-doseq-item", :kind "defn-", :line 164, :end-line 172, :hash "54363040"} {:id "defn-/literal-true?", :kind "defn-", :line 174, :end-line 174, :hash "-1333819690"} {:id "defn-/literal-false?", :kind "defn-", :line 175, :end-line 175, :hash "-1313096779"} {:id "defn-/assertion-form?", :kind "defn-", :line 177, :end-line 178, :hash "238628140"} {:id "form/37/declare", :kind "declare", :line 180, :end-line 180, :hash "-1596160099"} {:id "defn-/nested-forms-contain-assertion?", :kind "defn-", :line 182, :end-line 183, :hash "-28890695"} {:id "defn-/do-form-contains-assertion?", :kind "defn-", :line 185, :end-line 186, :hash "-947315160"} {:id "defn-/binding-form-contains-assertion?", :kind "defn-", :line 188, :end-line 190, :hash "-1545568470"} {:id "defn-/contains-assertion?", :kind "defn-", :line 192, :end-line 198, :hash "2063853848"} {:id "def/non-empty-coll-heads", :kind "def", :line 200, :end-line 200, :hash "-134423271"} {:id "defn-/non-empty-coll-expr", :kind "defn-", :line 202, :end-line 206, :hash "-1627812733"} {:id "defn-/seq-not-empty-guard?", :kind "defn-", :line 208, :end-line 212, :hash "1190904328"} {:id "defn-/empty?-guard?", :kind "defn-", :line 214, :end-line 218, :hash "226372305"} {:id "defn-/should-be-nil-guard?", :kind "defn-", :line 220, :end-line 221, :hash "654439219"} {:id "defn-/non-empty-guard-assertion?", :kind "defn-", :line 223, :end-line 230, :hash "-981564608"} {:id "defn-/preceded-by-non-empty-guard?", :kind "defn-", :line 232, :end-line 236, :hash "857877616"} {:id "defn-/flattenable-doseq-coll?", :kind "defn-", :line 238, :end-line 239, :hash "-1596735075"} {:id "def/empty-cctx", :kind "def", :line 241, :end-line 241, :hash "-1384542187"} {:id "defn-/ctx-depth", :kind "defn-", :line 243, :end-line 243, :hash "-986116504"} {:id "defn-/push-cctx-cause", :kind "defn-", :line 245, :end-line 247, :hash "1446676840"} {:id "defn-/innermost-cctx-cause", :kind "defn-", :line 249, :end-line 251, :hash "989259605"} {:id "defn-/symbol-in-form?", :kind "defn-", :line 253, :end-line 257, :hash "708742097"} {:id "defn-/near-doseq-guard?", :kind "defn-", :line 259, :end-line 266, :hash "1599044081"} {:id "defn-/doseq-conditional-cctx", :kind "defn-", :line 268, :end-line 282, :hash "-193712406"} {:id "defn-/partial-dispatch-if?", :kind "defn-", :line 284, :end-line 289, :hash "358443859"} {:id "defn-/runtime-conditional-cause", :kind "defn-", :line 291, :end-line 294, :hash "-1119272564"} {:id "defn-/reducible-cond-step", :kind "defn-", :line 296, :end-line 301, :hash "139656575"} {:id "defn-/reducible-cond-iterate", :kind "defn-", :line 303, :end-line 308, :hash "-1970172388"} {:id "defn-/reducible-cond-branches", :kind "defn-", :line 310, :end-line 318, :hash "-1238061652"} {:id "defn-/reducible-unary-conditional-branches", :kind "defn-", :line 320, :end-line 327, :hash "-596630077"} {:id "defn-/reducible-if-literal-branches", :kind "defn-", :line 329, :end-line 335, :hash "-1652451699"} {:id "defn-/reducible-literal-branches", :kind "defn-", :line 337, :end-line 349, :hash "893460775"} {:id "defn-/dispatch-if-branches", :kind "defn-", :line 351, :end-line 355, :hash "1862463126"} {:id "defn-/reducible-conditional-branches", :kind "defn-", :line 357, :end-line 359, :hash "1365369480"} {:id "def/conditional-head-syms", :kind "def", :line 361, :end-line 363, :hash "-2029598174"} {:id "defn-/cond-branch-forms", :kind "defn-", :line 365, :end-line 372, :hash "724006868"} {:id "defn-/case-branch-forms", :kind "defn-", :line 374, :end-line 381, :hash "1041144653"} {:id "defn-/condp-branch-forms", :kind "defn-", :line 383, :end-line 384, :hash "-292336679"} {:id "defn-/if-branch-forms", :kind "defn-", :line 386, :end-line 388, :hash "-546724505"} {:id "def/conditional-branch-extractors", :kind "def", :line 390, :end-line 404, :hash "-98756298"} {:id "defn-/conditional-branch-forms", :kind "defn-", :line 406, :end-line 409, :hash "1582157075"} {:id "form/74/declare", :kind "declare", :line 411, :end-line 411, :hash "990345103"} {:id "defn-/process-frame", :kind "defn-", :line 413, :end-line 415, :hash "-1521784206"} {:id "defn-/complete-preceding", :kind "defn-", :line 417, :end-line 421, :hash "378913017"} {:id "defn-/complete-seen-sut?", :kind "defn-", :line 423, :end-line 428, :hash "1494113547"} {:id "defn-/complete-child-ws", :kind "defn-", :line 430, :end-line 432, :hash "333210935"} {:id "defn-/push-child-frame", :kind "defn-", :line 434, :end-line 437, :hash "687311338"} {:id "defn-/resume-parent-frame", :kind "defn-", :line 439, :end-line 440, :hash "873158305"} {:id "defn-/process-conditional-step", :kind "defn-", :line 442, :end-line 457, :hash "865382703"} {:id "def/max-flattened-dotimes", :kind "def", :line 459, :end-line 459, :hash "-2145562049"} {:id "defn-/flattenable-dotimes-count?", :kind "defn-", :line 461, :end-line 462, :hash "1558346506"} {:id "defn-/process-dotimes", :kind "defn-", :line 464, :end-line 476, :hash "821701247"} {:id "defn-/process-dotimes-step", :kind "defn-", :line 478, :end-line 493, :hash "1629484075"} {:id "defn-/process-doseq", :kind "defn-", :line 495, :end-line 512, :hash "1372762874"} {:id "defn-/process-fn-invoke-step", :kind "defn-", :line 514, :end-line 528, :hash "1963414532"} {:id "defn-/defn-arity-fn-literal", :kind "defn-", :line 530, :end-line 531, :hash "7584441"} {:id "defn-/defn-docstring-fn-literal", :kind "defn-", :line 533, :end-line 534, :hash "-396941995"} {:id "defn-/defn-docstring?", :kind "defn-", :line 536, :end-line 537, :hash "1220406710"} {:id "defn-/defn->fn-literal", :kind "defn-", :line 539, :end-line 545, :hash "-397160554"} {:id "defn-/ns-fn-bindings", :kind "defn-", :line 547, :end-line 552, :hash "656755951"} {:id "defn-/test-line", :kind "defn-", :line 554, :end-line 555, :hash "-1424048643"} {:id "defn-/test-entry", :kind "defn-", :line 557, :end-line 558, :hash "-1272399894"} {:id "defn-/skip-test-form", :kind "defn-", :line 560, :end-line 561, :hash "-242367102"} {:id "defn-/nest-test-forms", :kind "defn-", :line 563, :end-line 564, :hash "-1321991206"} {:id "defn-/collect-test-form", :kind "defn-", :line 566, :end-line 567, :hash "1521910597"} {:id "def/test-form-handlers", :kind "def", :line 569, :end-line 573, :hash "-1760196749"} {:id "defn-/find-tests-step", :kind "defn-", :line 575, :end-line 579, :hash "1864902714"} {:id "defn-/find-tests", :kind "defn-", :line 581, :end-line 586, :hash "722202088"} {:id "defn-/sut-invoke-form?", :kind "defn-", :line 588, :end-line 589, :hash "966618037"} {:id "defn-/form-reaches-sut?", :kind "defn-", :line 591, :end-line 593, :hash "30025062"} {:id "defn-/advance-walk-state", :kind "defn-", :line 595, :end-line 598, :hash "569498286"} {:id "def/underlying-conditional-reasons", :kind "def", :line 600, :end-line 602, :hash "1473226787"} {:id "defn-/introverted-conditional-reason", :kind "defn-", :line 604, :end-line 605, :hash "2062598749"} {:id "defn-/conditional-assertion-reason", :kind "defn-", :line 607, :end-line 611, :hash "1948739796"} {:id "defn-/as-conditional-assertion", :kind "defn-", :line 613, :end-line 625, :hash "1835124783"} {:id "defn-/finalize-assertion-result", :kind "defn-", :line 627, :end-line 630, :hash "1962779200"} {:id "defn-/assertion-result", :kind "defn-", :line 632, :end-line 639, :hash "545324977"} {:id "defn-/stub-assertion-result", :kind "defn-", :line 641, :end-line 650, :hash "452423001"} {:id "defn-/questionable-result", :kind "defn-", :line 652, :end-line 657, :hash "805021069"} {:id "defn-/immediate-preceding-sut?", :kind "defn-", :line 659, :end-line 662, :hash "535255210"} {:id "defn-/side-effect-evidence", :kind "defn-", :line 664, :end-line 670, :hash "-1255916380"} {:id "defn-/side-effect-assertion-result", :kind "defn-", :line 672, :end-line 688, :hash "-1977496066"} {:id "defn-/build-finding-trace", :kind "defn-", :line 690, :end-line 695, :hash "377525482"} {:id "defn-/let-binding-pairs", :kind "defn-", :line 697, :end-line 703, :hash "-1105506548"} {:id "defn-/assoc-let-pair", :kind "defn-", :line 705, :end-line 709, :hash "699566064"} {:id "defn-/let-bindings", :kind "defn-", :line 711, :end-line 716, :hash "-161395392"} {:id "defn-/noop-step", :kind "defn-", :line 718, :end-line 719, :hash "-914493725"} {:id "defn-/child-step", :kind "defn-", :line 721, :end-line 724, :hash "-942969747"} {:id "defn-/result-step", :kind "defn-", :line 726, :end-line 727, :hash "1574422238"} {:id "defn-/fresh-walk-state", :kind "defn-", :line 729, :end-line 730, :hash "-1613175383"} {:id "defn-/process-let-step", :kind "defn-", :line 732, :end-line 739, :hash "-918336671"} {:id "defn-/process-seq-child-step", :kind "defn-", :line 741, :end-line 746, :hash "-814113114"} {:id "defn-/process-with-redefs-step", :kind "defn-", :line 748, :end-line 753, :hash "-1885126416"} {:id "defn-/process-fn-step", :kind "defn-", :line 755, :end-line 760, :hash "741284536"} {:id "defn-/process-parsed-assertion", :kind "defn-", :line 762, :end-line 780, :hash "-1270096350"} {:id "defn-/process-default-step", :kind "defn-", :line 782, :end-line 791, :hash "1214696092"} {:id "defn-/process-expression-step", :kind "defn-", :line 793, :end-line 798, :hash "695210630"} {:id "def/seq-child-complete", :kind "def", :line 800, :end-line 800, :hash "-1727835598"} {:id "defn-/process-seq-head", :kind "defn-", :line 802, :end-line 803, :hash "-110688850"} {:id "defn-/process-dotimes-head", :kind "defn-", :line 805, :end-line 807, :hash "-637715473"} {:id "def/head-form-steps", :kind "def", :line 809, :end-line 817, :hash "302488026"} {:id "defn-/head-form-step", :kind "defn-", :line 819, :end-line 828, :hash "-1805949168"} {:id "defn-/process-one-form", :kind "defn-", :line 830, :end-line 834, :hash "-2020723366"} {:id "defn-/initial-process-stack", :kind "defn-", :line 836, :end-line 840, :hash "980868665"} {:id "defn-/finished-frame-result", :kind "defn-", :line 842, :end-line 847, :hash "1782626509"} {:id "defn-/stack-after-step", :kind "defn-", :line 849, :end-line 859, :hash "-1558795323"} {:id "defn-/process-forms-sequential", :kind "defn-", :line 861, :end-line 879, :hash "202677959"} {:id "defn-/process-forms", :kind "defn-", :line 881, :end-line 885, :hash "1263996263"} {:id "defn-/body-form", :kind "defn-", :line 887, :end-line 890, :hash "576180413"} {:id "defn-/promote-cloistered", :kind "defn-", :line 892, :end-line 896, :hash "1925045456"} {:id "defn-/unconditional-assertion-results", :kind "defn-", :line 898, :end-line 899, :hash "-1579530133"} {:id "defn-/strongest-conditional-reason", :kind "defn-", :line 901, :end-line 907, :hash "-1458929829"} {:id "defn-/finding-conditional-cause", :kind "defn-", :line 909, :end-line 913, :hash "-1528230258"} {:id "defn-/finding-conditional-context", :kind "defn-", :line 915, :end-line 921, :hash "-1256792333"} {:id "defn-/first-unconditional-verdict", :kind "defn-", :line 923, :end-line 924, :hash "-2124349936"} {:id "defn-/extroverted-verdict", :kind "defn-", :line 926, :end-line 928, :hash "-1093477023"} {:id "defn-/likely-extroverted-verdict", :kind "defn-", :line 930, :end-line 933, :hash "-501801606"} {:id "defn-/questionable-verdict", :kind "defn-", :line 935, :end-line 937, :hash "566982830"} {:id "defn-/introverted-verdict", :kind "defn-", :line 939, :end-line 941, :hash "1774438313"} {:id "defn-/unconditional-verdict", :kind "defn-", :line 943, :end-line 947, :hash "1145335451"} {:id "defn-/test-verdict", :kind "defn-", :line 949, :end-line 954, :hash "-1307164133"} {:id "defn-/findings-for-forms", :kind "defn-", :line 956, :end-line 988, :hash "1962531481"} {:id "defn/analyze-forms", :kind "defn", :line 990, :end-line 993, :hash "-169972165"} {:id "defn/analyze-file", :kind "defn", :line 995, :end-line 999, :hash "1315649154"}]}
 ;; clj-mutate-manifest-end

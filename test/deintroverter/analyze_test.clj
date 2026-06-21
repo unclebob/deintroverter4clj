@@ -415,6 +415,64 @@
     (is (= 1 (count findings)))
     (is (= :conditional-assertion (:verdict (first findings))))))
 
+(deftest reports-missing-doseq-guard-cause
+  (let [forms [(list 'ns 'myapp.unguarded-doseq-test
+                      (list :require '[clojure.test :refer [deftest is]]
+                            '[myapp.core :as core]))
+               (list 'deftest 'unguarded-table
+                     (list 'doseq '[row rows]
+                           (list 'is (list '= 1 (list 'core/calculate-total 'row)))))]
+        finding (first (analyze/analyze-forms forms
+                                              {:sut (sut-for 'myapp.unguarded-doseq-test #{'myapp.core})
+                                               :project-ctx project-ctx}))]
+    (is (= :conditional-assertion (:verdict finding)))
+    (is (= :missing-doseq-guard (:conditional-cause finding)))
+    (is (= {:head 'doseq :coll 'rows} (:conditional-context finding)))
+    (is (= :missing-doseq-guard
+           (get-in finding [:trace :assertions 0 :conditional-cause])))))
+
+(deftest reports-runtime-conditional-cause
+  (let [forms [(list 'ns 'myapp.runtime-when-cause-test
+                      (list :require '[clojure.test :refer [deftest is]]
+                            '[myapp.core :as core]))
+               (list 'deftest 'runtime-when
+                     (list 'when 'flag
+                           (list 'is (list '= 1 (list 'core/calculate-total '[1])))))]
+        finding (first (analyze/analyze-forms forms
+                                              {:sut (sut-for 'myapp.runtime-when-cause-test #{'myapp.core})
+                                               :project-ctx project-ctx}))]
+    (is (= :conditional-assertion (:verdict finding)))
+    (is (= :runtime-conditional (:conditional-cause finding)))
+    (is (= {:head 'when} (:conditional-context finding)))))
+
+(deftest reports-partial-dispatch-if-cause
+  (let [forms [(list 'ns 'myapp.partial-if-cause-test
+                      (list :require '[clojure.test :refer [deftest is]]
+                            '[myapp.core :as core]))
+               (list 'deftest 'one-branch
+                     (list 'if 'flag
+                           (list 'is (list '= 1 (list 'core/calculate-total '[1])))
+                           '(println "skip")))]
+        finding (first (analyze/analyze-forms forms
+                                              {:sut (sut-for 'myapp.partial-if-cause-test #{'myapp.core})
+                                               :project-ctx project-ctx}))]
+    (is (= :conditional-assertion (:verdict finding)))
+    (is (= :partial-dispatch-if (:conditional-cause finding)))))
+
+(deftest reports-runtime-dotimes-cause
+  (let [forms [(list 'ns 'myapp.runtime-dotimes-cause-test
+                      (list :require '[clojure.test :refer [deftest is]]
+                            '[myapp.core :as core]))
+               (list 'deftest 'dynamic-count
+                     (list 'let '[n 2]
+                           (list 'dotimes '[i 'n]
+                                 (list 'is (list '= 1 (list 'core/calculate-total (list 'inc 'i)))))))]
+        finding (first (analyze/analyze-forms forms
+                                              {:sut (sut-for 'myapp.runtime-dotimes-cause-test #{'myapp.core})
+                                               :project-ctx project-ctx}))]
+    (is (= :conditional-assertion (:verdict finding)))
+    (is (= :runtime-dotimes (:conditional-cause finding)))))
+
 (deftest classifies-runtime-dotimes-as-conditional
   (let [forms [(list 'ns 'myapp.runtime-dotimes-test
                       (list :require '[clojure.test :refer [deftest is]]

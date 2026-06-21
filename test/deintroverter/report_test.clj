@@ -48,6 +48,25 @@
          (with-out-str (report/print-human findings false))
          ":conditional-assertion"))))
 
+(deftest human-output-shows-conditional-cause
+  (let [findings [{:file "t.clj" :line 10 :test-name "table" :test-form :deftest
+                   :verdict :conditional-assertion :reason :would-be-extroverted
+                   :conditional-cause :missing-doseq-guard
+                   :conditional-context {:head 'doseq :coll 'rows}}]]
+    (let [out (with-out-str (report/print-human findings false))]
+      (is (str/includes? out "cause: missing doseq guard on rows")))))
+
+(deftest summary-groups-conditional-causes
+  (let [findings [{:verdict :conditional-assertion :reason :would-be-extroverted
+                   :conditional-cause :missing-doseq-guard}
+                  {:verdict :conditional-assertion :reason :would-be-extroverted
+                   :conditional-cause :missing-doseq-guard}
+                  {:verdict :conditional-assertion :reason :would-be-extroverted
+                   :conditional-cause :runtime-conditional}]
+        summary (:summary (report/build-edn "/proj" findings []))]
+    (is (= {:missing-doseq-guard 2 :runtime-conditional 1}
+           (get-in summary [:conditional-assertion :by-cause])))))
+
 (deftest summary-groups-questionable-and-introverted-by-reason
   (let [findings (concat sample-findings
                          [{:verdict :questionable :reason :unknown-assertion-macro}

@@ -10,26 +10,52 @@
                    [reason (count findings)])
                  (group-by :reason matched))))))
 
+(defn- summarize-conditional-causes [findings]
+  (let [matched (filter #(= :conditional-assertion (:verdict %)) findings)
+        with-cause (filter :conditional-cause matched)]
+    (when (seq with-cause)
+      (into {}
+            (map (fn [[cause findings]]
+                   [cause (count findings)])
+                 (group-by :conditional-cause with-cause))))))
+
 (defn- summarize [findings]
-  {:extroverted            (count (filter #(= :extroverted (:verdict %)) findings))
-   :likely-extroverted     (count (filter #(= :likely-extroverted (:verdict %)) findings))
-   :conditional-assertion  (summarize-by-reason findings :conditional-assertion)
-   :cloistered             (summarize-by-reason findings :cloistered)
-   :introverted            (summarize-by-reason findings :introverted)
-   :questionable           (summarize-by-reason findings :questionable)})
+  (let [conditional (summarize-by-reason findings :conditional-assertion)
+        by-cause (summarize-conditional-causes findings)]
+    {:extroverted            (count (filter #(= :extroverted (:verdict %)) findings))
+     :likely-extroverted     (count (filter #(= :likely-extroverted (:verdict %)) findings))
+     :conditional-assertion  (cond-> conditional
+                                 by-cause (assoc :by-cause by-cause))
+     :cloistered             (summarize-by-reason findings :cloistered)
+     :introverted            (summarize-by-reason findings :introverted)
+     :questionable           (summarize-by-reason findings :questionable)}))
 
 (defn- report-by-default? [verdict verbose?]
   (or verbose?
       (and (not= :extroverted verdict)
            (not= :likely-extroverted verdict))))
 
+(defn- format-conditional-cause [cause context]
+  (case cause
+    :missing-doseq-guard (str "missing doseq guard on " (:coll context))
+    :near-doseq-guard (str "near doseq guard on " (:coll context))
+    :non-flattenable-doseq (str "non-flattenable doseq collection " (:coll context))
+    :runtime-dotimes (str "runtime dotimes count " (:count context))
+    :partial-dispatch-if "partial dispatch-if (one branch asserts)"
+    :runtime-conditional (str "runtime " (name (:head context)))
+    :malformed-doseq "malformed doseq binding"
+    (name cause)))
+
 (defn print-human
   [findings verbose?]
-  (doseq [{:keys [file line test-name test-form verdict reason]} findings
+  (doseq [{:keys [file line test-name test-form verdict reason conditional-cause conditional-context]}
+          findings
           :when (report-by-default? verdict verbose?)]
     (println (str file ":" line "  (" (name test-form) " " test-name ")  " verdict))
     (when reason
-      (println (str "  reason: " (name reason))))))
+      (println (str "  reason: " (name reason))))
+    (when conditional-cause
+      (println (str "  cause: " (format-conditional-cause conditional-cause conditional-context))))))
 
 (defn build-edn
   [project-root findings errors]
@@ -47,5 +73,5 @@
   0)
 
 ;; clj-mutate-manifest-begin
-;; {:version 1, :tested-at "2026-06-21T09:31:51.306637-05:00", :module-hash "-1783862519", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line 2, :hash "486268263"} {:id "defn-/summarize-by-reason", :kind "defn-", :line 4, :end-line 11, :hash "170078755"} {:id "defn-/summarize", :kind "defn-", :line 13, :end-line 19, :hash "-766439982"} {:id "defn-/report-by-default?", :kind "defn-", :line 21, :end-line 24, :hash "-1788957063"} {:id "defn/print-human", :kind "defn", :line 26, :end-line 32, :hash "1172584755"} {:id "defn/build-edn", :kind "defn", :line 34, :end-line 39, :hash "-1547937653"} {:id "defn/print-edn", :kind "defn", :line 41, :end-line 43, :hash "1536227182"} {:id "defn/exit-code", :kind "defn", :line 45, :end-line 47, :hash "187940237"}]}
+;; {:version 1, :tested-at "2026-06-21T09:47:10.634975-05:00", :module-hash "-162266184", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line 2, :hash "486268263"} {:id "defn-/summarize-by-reason", :kind "defn-", :line 4, :end-line 11, :hash "170078755"} {:id "defn-/summarize-conditional-causes", :kind "defn-", :line 13, :end-line 20, :hash "717490825"} {:id "defn-/summarize", :kind "defn-", :line 22, :end-line 31, :hash "-1355570752"} {:id "defn-/report-by-default?", :kind "defn-", :line 33, :end-line 36, :hash "-1788957063"} {:id "defn-/format-conditional-cause", :kind "defn-", :line 38, :end-line 47, :hash "-212862637"} {:id "defn/print-human", :kind "defn", :line 49, :end-line 58, :hash "615033391"} {:id "defn/build-edn", :kind "defn", :line 60, :end-line 65, :hash "-1547937653"} {:id "defn/print-edn", :kind "defn", :line 67, :end-line 69, :hash "1536227182"} {:id "defn/exit-code", :kind "defn", :line 71, :end-line 73, :hash "187940237"}]}
 ;; clj-mutate-manifest-end
