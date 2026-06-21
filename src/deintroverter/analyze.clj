@@ -186,7 +186,7 @@
   (and (seq? form) (= 'do (first form)) (nested-forms-contain-assertion? form 1)))
 
 (defn- binding-form-contains-assertion? [form]
-  (and (seq? form) (#{'let 'loop} (first form)) (>= (count form) 3)
+  (and (seq? form) (#{'let 'loop 'binding} (first form)) (>= (count form) 3)
        (nested-forms-contain-assertion? form 2)))
 
 (defn- contains-assertion? [form]
@@ -989,6 +989,7 @@
 (def ^:private head-form-steps
   {'let process-let-step
    'loop process-let-step
+   'binding process-let-step
    'do process-seq-head
    'try process-seq-head
    'catch process-seq-head

@@ -87,6 +87,14 @@
     (is (= :introverted (:verdict (second findings))))
     (is (= :no-sut-assertion (:reason (second findings))))))
 
+(deftest walks-assertions-inside-binding
+  (let [findings (analyze "binding_output.clj" 'myapp.binding-output-spec #{'myapp.core})]
+    (is (= 2 (count findings)))
+    (is (pos? (count (:assertions (:trace (first findings))))))
+    (is (pos? (count (:assertions (:trace (second findings))))))
+    (is (not= :no-assertions (:reason (first findings))))
+    (is (not= :no-assertions (:reason (second findings))))))
+
 (deftest classifies-cloistered-via-alias-extra-paths
   (is (= :cloistered (:verdict (first (analyze "cloistered_spec_mother.clj"
                                                 'myapp.spec-mother-spec
