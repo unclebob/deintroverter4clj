@@ -126,6 +126,16 @@
            (get-in (first findings) [:trace :assertions 1 :side-effect-evidence])))
     (is (= :introverted (:verdict (second findings))))))
 
+(deftest classifies-sut-invoke-in-assertion-as-extroverted
+  (let [findings (analyze "assertion_sut_invoke.clj" 'myapp.assertion-sut-invoke-spec #{'myapp.core})]
+    (is (= 3 (count findings)))
+    (is (= :extroverted (:verdict (first findings))))
+    (is (= :likely-extroverted (:verdict (second findings))))
+    (is (= :sut-direct-assertion-heuristic (:reason (second findings))))
+    (is (= :sut-invoke
+           (get-in (second findings) [:trace :assertions 0 :direct-assertion-evidence])))
+    (is (= :introverted (:verdict (nth findings 2))))))
+
 (deftest classifies-with-redefs-world-readback-as-likely-extroverted
   (let [findings (analyze "with_redefs_world_readback.clj"
                           'myapp.with-redefs-world-readback-spec

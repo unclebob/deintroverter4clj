@@ -680,14 +680,55 @@
     (as-conditional-assertion result cctx)
     result))
 
+(def ^:private non-asserted-subject-heads
+  #{'deref 'clojure.core/deref})
+
+(defn- clojure-platform-ns? [ns-name]
+  (or (= ns-name "clojure")
+      (.startsWith ns-name "clojure.")))
+
+(defn- namespaced-production-invoke? [form bindings trace-ctx]
+  (and (seq? form)
+       (symbol? (first form))
+       (when-let [ns (namespace (first form))]
+         (and (not (clojure-platform-ns? ns))
+              (not (trace/reaches-test-module? form bindings trace-ctx))))))
+
+(defn- resolve-asserted-subject [form bindings]
+  (loop [f form seen #{}]
+    (if (and (symbol? f) (contains? bindings f) (not (contains? seen f)))
+      (recur (get bindings f) (conj seen f))
+      f)))
+
+(defn- asserted-production-invoke? [form bindings trace-ctx]
+  (let [subject (resolve-asserted-subject form bindings)]
+    (and (seq? subject) (symbol? (first subject))
+         (not (contains? non-asserted-subject-heads (first subject)))
+         (or (form-reaches-sut? subject bindings trace-ctx)
+             (namespaced-production-invoke? subject bindings trace-ctx)))))
+
+(defn- direct-assertion-result [form bindings trace-ctx cctx]
+  (let [subject (resolve-asserted-subject form bindings)
+        sut? (form-reaches-sut? subject bindings trace-ctx)]
+    (finalize-assertion-result
+     {:verdict (if sut? :extroverted :likely-extroverted)
+      :reason (when-not sut? :sut-direct-assertion-heuristic)
+      :trace (assoc (trace/explain-trace subject bindings trace-ctx)
+                    :assertion-form form
+                    :direct-assertion-evidence :sut-invoke)}
+     cctx)))
+
 (defn- assertion-result
   [form bindings trace-ctx cctx]
-  (finalize-assertion-result
-   (let [{:keys [verdict reason]} (trace/trace-form form bindings trace-ctx)]
-     {:verdict verdict
-      :reason reason
-      :trace (trace/explain-trace form bindings trace-ctx)})
-   cctx))
+  (let [{:keys [verdict reason]} (trace/trace-form form bindings trace-ctx)]
+    (if (and (= :introverted verdict)
+             (asserted-production-invoke? form bindings trace-ctx))
+      (direct-assertion-result form bindings trace-ctx cctx)
+      (finalize-assertion-result
+       {:verdict verdict
+        :reason reason
+        :trace (trace/explain-trace form bindings trace-ctx)}
+       cctx))))
 
 (defn- stub-assertion-result
   [assertion-form bindings trace-ctx preceding-sut cctx]
@@ -872,12 +913,6 @@
                         (contains? (:sut-mutation-atoms walk-state) %))
                   (deref-target-syms-in-form asserted-form))
         :world-atom-readback))))
-
-(defn- namespaced-production-invoke? [form bindings trace-ctx]
-  (and (seq? form)
-       (symbol? (first form))
-       (namespace (first form))
-       (not (trace/reaches-test-module? form bindings trace-ctx))))
 
 (defn- let-bound-sut-result-syms [bindings trace-ctx]
   (into #{} (keep (fn [[k v]]

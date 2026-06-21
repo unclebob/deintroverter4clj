@@ -12,6 +12,13 @@
    :quote true
    :syntax-quote true})
 
+(defn- cljc-parse-opts [opts]
+  (assoc opts :read-cond :allow :features #{:clj}))
+
+(defn- conditional-read-error? [^Exception e]
+  (and e (.getMessage e)
+       (.contains (.getMessage e) "Conditional read not allowed")))
+
 (defn- auto-resolve-opts [{:keys [namespace aliases]}]
   (when namespace
     {:auto-resolve (assoc (or aliases {}) :current namespace)}))
@@ -23,13 +30,27 @@
         (parse-ns-form ns-form)))
     (catch Exception _ nil)))
 
+(defn- parse-string-all-with-opts [s opts]
+  (try
+    (vec (edamame/parse-string-all s opts))
+    (catch Exception e
+      (if (conditional-read-error? e)
+        (vec (edamame/parse-string-all s (cljc-parse-opts opts)))
+        (throw e)))))
+
 (defn read-string-all
   "Read all top-level forms from a string. Attaches :line metadata to each form.
-  Resolves ::keyword and ::alias/keyword from the file's ns form and :as aliases."
+  Resolves ::keyword and ::alias/keyword from the file's ns form and :as aliases.
+  Retries with :clj reader-conditionals when a .cljc-style conditional is present."
   [s]
   (let [opts (merge (base-parse-opts)
                     (or (auto-resolve-opts (ns-info-from-source s)) {}))]
-    (vec (edamame/parse-string-all s opts))))
+    (parse-string-all-with-opts s opts)))
+
+(defn namespace-from-source
+  "Return the ns symbol declared in source, or nil when absent or unreadable."
+  [s]
+  (:namespace (ns-info-from-source s)))
 
 (defn- quoted-ns-sym? [entry]
   (and (list? entry) (= 'quote (first entry))))

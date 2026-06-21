@@ -62,6 +62,14 @@
          (count (parse/read-string-all
                  "(ns t)\n(defmacro with-log-path [path & body]\n  `(let [x# 1] ~@body))")))))
 
+(deftest reads-cljc-reader-conditionals
+  (let [forms (parse/read-string-all
+               (str "(ns myapp.format)\n"
+                    "(defn format-cell [x] x)\n"
+                    "#?(:clj (defn cljc-only [] :clj) :cljs (defn cljc-only [] :cljs))"))]
+    (is (= 3 (count forms)))
+    (is (= 'myapp.format (:namespace (parse/parse-ns-form (first forms)))))))
+
 (deftest reads-alias-qualified-keywords
   (let [forms (parse/read-string-all
                (str "(ns myapp.game-spec\n"

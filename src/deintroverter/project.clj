@@ -22,7 +22,8 @@
 
 (defn- ns-from-file [^File f]
   (try
-    (namespace-from-forms (parse/read-string-all (slurp f)))
+    (or (namespace-from-forms (parse/read-string-all (slurp f)))
+        (parse/namespace-from-source (slurp f)))
     (catch Exception _ nil)))
 
 (defn- clojure-source? [^File f]

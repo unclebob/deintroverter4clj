@@ -1,6 +1,7 @@
 (ns scan-common
   "Project-scan helpers for external scripts. Not part of deintroverter."
   (:require [clojure.string :as str]
+            [deintroverter.parse :as parse]
             [deintroverter.sut :as sut]
             [deintroverter.test-modules :as test-modules])
   (:import [java.io File]))
@@ -45,7 +46,11 @@
                   (concat (or (:paths deps) ["src"]) extra))))))
 
 (defn- ns-from-file [^File f]
-  (try (some-> f slurp read-string second) (catch Throwable _ nil)))
+  (try
+    (let [s (slurp f)]
+      (or (parse/namespace-from-source s)
+          (:namespace (parse/parse-ns-form (first (parse/read-string-all s))))))
+    (catch Throwable _ nil)))
 
 (defn clojure-source-file?
   [^File f]
