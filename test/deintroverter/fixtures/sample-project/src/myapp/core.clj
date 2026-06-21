@@ -34,3 +34,5 @@
   ((:update-game-map! ctx)
    #(assoc-in % path (assoc contents :major-invasion true))))
 
+
+

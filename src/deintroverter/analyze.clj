@@ -466,8 +466,16 @@
        false))
 
 (defn- complete-child-ws [child-frame]
-  {:preceding (complete-preceding child-frame)
-   :seen-sut? (complete-seen-sut? child-frame)})
+  (let [parent-ws (:ws (:resume child-frame))
+        child-ws (:ws child-frame)]
+    {:preceding (complete-preceding child-frame)
+     :seen-sut? (complete-seen-sut? child-frame)
+     :stub-capture-atoms (into (or (:stub-capture-atoms parent-ws) #{})
+                               (or (:stub-capture-atoms child-ws) #{}))
+     :sut-mutation-atoms (into (or (:sut-mutation-atoms parent-ws) #{})
+                               (or (:sut-mutation-atoms child-ws) #{}))
+     :last-sut-call (or (:last-sut-call child-ws)
+                        (:last-sut-call parent-ws))}))
 
 (defn- push-child-frame [stack child]
   (let [parent (peek stack)
@@ -865,6 +873,36 @@
                   (deref-target-syms-in-form asserted-form))
         :world-atom-readback))))
 
+(defn- namespaced-production-invoke? [form bindings trace-ctx]
+  (and (seq? form)
+       (symbol? (first form))
+       (namespace (first form))
+       (not (trace/reaches-test-module? form bindings trace-ctx))))
+
+(defn- let-bound-sut-result-syms [bindings trace-ctx]
+  (into #{} (keep (fn [[k v]]
+                    (when (and (symbol? k)
+                               (or (form-reaches-sut? v bindings trace-ctx)
+                                   (namespaced-production-invoke? v bindings trace-ctx)))
+                      k))
+                  bindings)))
+
+(defn- sut-result-binding-value [sym bindings trace-ctx]
+  (let [v (get bindings sym)]
+    (when (or (form-reaches-sut? v bindings trace-ctx)
+              (namespaced-production-invoke? v bindings trace-ctx))
+      v)))
+
+(defn- sut-result-trace-target [asserted-form bindings trace-ctx]
+  (some #(sut-result-binding-value % bindings trace-ctx)
+        (symbols-in-form asserted-form)))
+
+(defn- sut-result-read-evidence [asserted-form bindings trace-ctx]
+  (when (= :introverted (:verdict (trace/trace-form asserted-form bindings trace-ctx)))
+    (when (seq (clojure.set/intersection (let-bound-sut-result-syms bindings trace-ctx)
+                                         (symbols-in-form asserted-form)))
+      :sut-result-read)))
+
 (defn- wiring-capture-evidence [asserted-form bindings trace-ctx walk-state]
   (when (= :introverted (:verdict (trace/trace-form asserted-form bindings trace-ctx)))
     (when (and (:seen-sut? walk-state)
@@ -932,6 +970,7 @@
   (when (= :introverted (:verdict (trace/trace-form asserted-form bindings trace-ctx)))
     (or (sut-atom-read-evidence asserted-form bindings trace-ctx walk-state)
         (world-atom-readback-evidence asserted-form bindings trace-ctx walk-state)
+        (sut-result-read-evidence asserted-form bindings trace-ctx)
         (when (immediate-preceding-sut? asserted-form bindings trace-ctx (:preceding walk-state))
           :immediate-preceding-sut)
         (when (and (:seen-sut? walk-state)
@@ -943,8 +982,10 @@
   (let [evidence (side-effect-evidence asserted-form bindings trace-ctx walk-state)
         {:keys [preceding]} walk-state
         sut-call (wiring-sut-call walk-state bindings trace-ctx)
+        sut-result-call (sut-result-trace-target asserted-form bindings trace-ctx)
         trace-target (case evidence
                        (:sut-atom-read :world-atom-readback) sut-call
+                       :sut-result-read (or sut-result-call assertion-form)
                        :immediate-preceding-sut preceding
                        :test-state-binding asserted-form
                        assertion-form)]
@@ -954,8 +995,9 @@
       :trace (cond-> (trace/explain-trace trace-target bindings trace-ctx)
                true (assoc :assertion-form assertion-form
                            :side-effect-evidence evidence)
-               (and sut-call (#{:sut-atom-read :world-atom-readback :immediate-preceding-sut} evidence))
-               (assoc :preceding-sut-call sut-call))}
+               (or (and sut-call (#{:sut-atom-read :world-atom-readback :immediate-preceding-sut} evidence))
+                   (= :sut-result-read evidence))
+               (assoc :preceding-sut-call (or sut-call sut-result-call)))}
      cctx)))
 
 (defn- build-finding-trace [trace-ctx sut assertion-results]

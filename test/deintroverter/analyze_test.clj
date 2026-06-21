@@ -115,6 +115,26 @@
            (get-in (first findings) [:trace :assertions 1 :side-effect-evidence])))
     (is (= :introverted (:verdict (second findings))))))
 
+(deftest classifies-sut-result-read-as-likely-extroverted
+  (let [findings (analyze "debug_sut_result.clj" 'myapp.debug-sut-result-spec #{'myapp.core})]
+    (is (= 2 (count findings)))
+    (is (= :likely-extroverted (:verdict (first findings))))
+    (is (= :sut-side-effect-heuristic (:reason (first findings))))
+    (is (= :sut-result-read
+           (get-in (first findings) [:trace :assertions 0 :side-effect-evidence])))
+    (is (= :sut-result-read
+           (get-in (first findings) [:trace :assertions 1 :side-effect-evidence])))
+    (is (= :introverted (:verdict (second findings))))))
+
+(deftest classifies-with-redefs-world-readback-as-likely-extroverted
+  (let [findings (analyze "with_redefs_world_readback.clj"
+                          'myapp.with-redefs-world-readback-spec
+                          #{'myapp.core})]
+    (is (= 1 (count findings)))
+    (is (= :likely-extroverted (:verdict (first findings))))
+    (is (= :world-atom-readback
+           (get-in (first findings) [:trace :assertions 0 :side-effect-evidence])))))
+
 (deftest classifies-file-dependency-as-likely-extroverted
   (let [findings (analyze "file_dependency.clj" 'myapp.file-dependency-spec #{'myapp.core})]
     (is (= 2 (count findings)))
