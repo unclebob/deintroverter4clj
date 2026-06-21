@@ -207,10 +207,16 @@
   (when-let [ns-s (resolved-ns-for-sym sym ctx)]
     (contains? test-modules (symbol ns-s))))
 
+(defn- refer-all-test-module-level [sym ctx]
+  (when (and (nil? (namespace sym))
+             (not (contains? (:core-syms ctx) sym))
+             (seq (:refer-all-test-modules ctx)))
+    :likely))
+
 (defn- test-module-call-level [form ctx]
   (when-let [target (invoke-target-sym form)]
-    (when (sym-test-module? target ctx)
-      :proven)))
+    (or (when (sym-test-module? target ctx) :proven)
+        (refer-all-test-module-level target ctx))))
 
 (defn- test-module-var-ref-level [sym bindings ctx]
   (when (and (symbol? sym) (not (contains? bindings sym)))
@@ -227,7 +233,7 @@
         calls    (collect-calls expanded)
         levels   (concat (keep #(test-module-call-level % ctx) calls)
                          (test-module-var-ref-levels expanded bindings ctx))]
-    (boolean (some #{:proven} levels))))
+    (boolean (some #{:proven :likely} levels))))
 
 (defn binding-from-test-module?
   "True when any let-bound symbol originates from a test-module form."
@@ -340,19 +346,22 @@
 (defn make-trace-ctx
   "Build trace context from ns-info and the SUT namespace set."
   [{:keys [refer-syms refer-all] :as ns-info} sut resolve-ns & [{:keys [test-modules]}]]
-  (let [sut-refer-syms (into {}
+  (let [test-modules (or test-modules #{})
+        sut-refer-syms (into {}
                              (keep (fn [[sym ns]]
                                      (when (contains? sut ns)
                                        [sym ns]))
                                    refer-syms))
-        refer-all-sut (clojure.set/intersection sut refer-all)]
+        refer-all-sut (clojure.set/intersection sut refer-all)
+        refer-all-test-modules (clojure.set/intersection test-modules refer-all)]
     {:sut sut
      :resolve-ns resolve-ns
      :refer-syms sut-refer-syms
      :all-refer-syms refer-syms
      :refer-all-sut refer-all-sut
+     :refer-all-test-modules refer-all-test-modules
      :core-syms (load-core-denylist)
-     :test-modules (or test-modules #{})
+     :test-modules test-modules
      :test-ns (:namespace ns-info)
      :requires (:requires ns-info)}))
 

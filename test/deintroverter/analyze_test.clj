@@ -45,6 +45,14 @@
                                                         'myapp.cloistered-spec
                                                         #{'myapp.core}))))))
 
+(deftest classifies-cloistered-when-reaching-test-module-via-refer-all
+  (let [findings (analyze "cloistered_refer_all.clj"
+                          'myapp.cloistered-refer-all-spec
+                          #{'myapp.core})]
+    (is (= 2 (count findings)))
+    (is (every? #(= :cloistered (:verdict %)) findings))
+    (is (every? #(= :reaches-test-module (:reason %)) findings))))
+
 (deftest classifies-stamping-negative-assertions-not-questionable
   (let [findings (analyze "empire_stamping_negative.clj" 'myapp.stamping-negative-spec #{})]
     (is (= 1 (count findings)))

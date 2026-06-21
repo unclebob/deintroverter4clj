@@ -167,6 +167,15 @@
                  {}
                  ctx)))))
 
+(deftest reaches-test-module-via-refer-all-heuristic
+  (let [ctx (trace/make-trace-ctx
+             {:refer-syms {} :refer-all #{'myapp.helpers-test}}
+             sut
+             resolve-ns
+             {:test-modules #{'myapp.helpers-test}})]
+    (is (true? (trace/reaches-test-module? '(valid-input? 1) {} ctx)))
+    (is (false? (trace/reaches-test-module? '(count items) {} ctx)))))
+
 (deftest make-trace-ctx-keeps-only-sut-refer-syms
   (let [ctx (trace/make-trace-ctx
              {:refer-syms {'calc 'myapp.core 'helper 'myapp.helpers}
