@@ -222,6 +222,25 @@
 (defn- flattenable-doseq-coll? [coll-expr bindings]
   (vector? (doseq-coll coll-expr bindings)))
 
+(defn- gen-sample-head? [head]
+  (or (= 'gen/sample head)
+      (= 'clojure.spec.gen.alpha/sample head)))
+
+(defn- gen-sample-size-trusted? [form]
+  (or (= 2 (count form))
+      (and (= 3 (count form))
+           (let [size (nth form 2)]
+             (and (number? size) (pos? size))))))
+
+(defn- gen-sample-form? [form]
+  (and (seq? form)
+       (>= (count form) 2)
+       (gen-sample-head? (first form))
+       (gen-sample-size-trusted? form)))
+
+(defn- trusted-generative-doseq-coll? [coll-expr]
+  (gen-sample-form? coll-expr))
+
 (def ^:private empty-cctx {:depth 0 :causes []})
 
 (defn- ctx-depth [cctx] (:depth cctx 0))
@@ -245,7 +264,8 @@
 
 (defn- doseq-guarded-cctx? [coll-expr bindings done-forms]
   (or (flattenable-doseq-coll? coll-expr bindings)
-      (preceded-by-non-empty-guard? done-forms coll-expr)))
+      (preceded-by-non-empty-guard? done-forms coll-expr)
+      (trusted-generative-doseq-coll? coll-expr)))
 
 (defn- doseq-symbol-cctx [coll-expr done-forms cctx]
   (push-cctx-cause cctx

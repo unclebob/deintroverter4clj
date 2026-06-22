@@ -601,6 +601,13 @@
                                                :project-ctx project-ctx}))]
     (is (= :extroverted (:verdict finding)))))
 
+(deftest classifies-gen-sample-doseq-as-extroverted
+  (let [findings (analyze "gen_sample_doseq.clj" 'myapp.gen-sample-doseq-spec #{'myapp.core})]
+    (is (= 2 (count findings)))
+    (is (= :extroverted (:verdict (first findings))))
+    (is (= :conditional-assertion (:verdict (second findings))))
+    (is (= :non-flattenable-doseq (:conditional-cause (second findings))))))
+
 (deftest reports-missing-doseq-guard-cause
   (let [forms [(list 'ns 'myapp.unguarded-doseq-test
                       (list :require '[clojure.test :refer [deftest is]]
