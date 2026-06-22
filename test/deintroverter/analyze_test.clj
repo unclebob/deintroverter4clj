@@ -65,7 +65,7 @@
 
 (deftest classifies-sut-side-effect-as-likely-extroverted
   (let [findings (analyze "side_effect_helpers.clj" 'myapp.side-effect-spec #{'myapp.core})]
-    (is (= 3 (count findings)))
+    (is (= 5 (count findings)))
     (is (= :likely-extroverted (:verdict (first findings))))
     (is (= :provenance-link (:reason (first findings))))
     (is (= :sut-side-effect-heuristic (:reason-legacy (first findings))))
@@ -74,7 +74,11 @@
     (is (= :likely-extroverted (:verdict (second findings))))
     (is (= :test-state-binding
            (get-in (second findings) [:trace :assertions 0 :side-effect-evidence])))
-    (is (= :cloistered (:verdict (nth findings 2))))))
+    (is (= :likely-extroverted (:verdict (nth findings 2))))
+    (is (= :sut-then-test-module-read
+           (get-in (nth findings 2) [:trace :assertions 0 :side-effect-evidence])))
+    (is (= :cloistered (:verdict (nth findings 3))))
+    (is (= :cloistered (:verdict (nth findings 4))))))
 
 (deftest classifies-stub-capture-wiring-as-likely-extroverted
   (let [findings (analyze "stub_capture_wiring.clj" 'myapp.stub-capture-wiring-spec #{'myapp.core})]

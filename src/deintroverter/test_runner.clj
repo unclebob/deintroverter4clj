@@ -13,6 +13,7 @@
     deintroverter.stack-depth-test
     deintroverter.assertions-test
     deintroverter.analyze-test
+    deintroverter.external-test
     deintroverter.provenance-test
     deintroverter.golden-test
     deintroverter.report-test

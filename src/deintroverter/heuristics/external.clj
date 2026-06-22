@@ -120,12 +120,35 @@
                   (forms/deref-target-syms-in-form asserted-form))
         :world-atom-readback))))
 
+(defn- invoke-form? [form]
+  (and (seq? form) (symbol? (first form))))
+
+(defn- test-module-state-key-read-form? [form trace-ctx]
+  (and (invoke-form? form)
+       (trace/reaches-test-module? form {} trace-ctx)
+       (pos? (count (rest form)))
+       (every? keyword? (rest form))))
+
+(defn- asserted-test-module-state-key-read? [asserted-form trace-ctx]
+  (boolean
+   (some #(test-module-state-key-read-form? % trace-ctx)
+         (forms/collect-seq-forms asserted-form))))
+
 (defn- immediate-preceding-sut-evidence [asserted-form bindings trace-ctx walk-state]
   (when (introverted-asserted? asserted-form bindings trace-ctx)
     (when (and (:preceding walk-state)
                (form-reaches-sut? (:preceding walk-state) bindings trace-ctx)
-               (trace/reaches-test-module? asserted-form bindings trace-ctx))
+               (asserted-test-module-state-key-read? asserted-form trace-ctx))
       :immediate-preceding-sut)))
+
+(defn- sut-then-test-module-read-evidence [asserted-form bindings trace-ctx walk-state]
+  (when (introverted-asserted? asserted-form bindings trace-ctx)
+    (when (and (:seen-sut? walk-state)
+               (wiring-sut-call walk-state bindings trace-ctx)
+               (asserted-test-module-state-key-read? asserted-form trace-ctx)
+               (not (and (:preceding walk-state)
+                         (form-reaches-sut? (:preceding walk-state) bindings trace-ctx))))
+      :sut-then-test-module-read)))
 
 (defn- test-state-binding-evidence [asserted-form bindings trace-ctx walk-state]
   (when (introverted-asserted? asserted-form bindings trace-ctx)
@@ -191,6 +214,7 @@
       (file-dependency-evidence asserted-form bindings trace-ctx walk-state)
       (world-atom-readback-evidence asserted-form bindings trace-ctx walk-state)
       (immediate-preceding-sut-evidence asserted-form bindings trace-ctx walk-state)
+      (sut-then-test-module-read-evidence asserted-form bindings trace-ctx walk-state)
       (test-state-binding-evidence asserted-form bindings trace-ctx walk-state)))
 
 (defn- likely-extroverted-result-map
@@ -241,6 +265,9 @@
    :immediate-preceding-sut
    (fn [af _ b tc ws e]
      (side-effect-result af b tc ws e {:trace-target (:preceding ws)}))
+   :sut-then-test-module-read
+   (fn [af _ b tc ws e]
+     (side-effect-result af b tc ws e))
    :test-state-binding
    (fn [af afm b tc ws e]
      (side-effect-result af b tc ws e {:trace-target afm :preceding-sut-call? false}))})

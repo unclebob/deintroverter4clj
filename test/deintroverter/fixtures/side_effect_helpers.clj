@@ -15,5 +15,15 @@
     (let [state (helpers/read-test-state :game-map)]
       (should= {} state)))
 
+  (it "promotes when sut in let precedes deferred test-module state read"
+    (helpers/set-test-world! {})
+    (let [unit [1 1]]
+      (core/move-coastline-unit unit))
+    (should-be-nil (get-in (helpers/read-test-state :game-map) [:missing :path])))
+
+  (it "stays cloistered when sut does not ground helper predicate"
+    (core/move-coastline-unit [1 1])
+    (should= true (helpers/valid-input? 1)))
+
   (it "stays cloistered without sut call"
     (should= true (helpers/valid-input? 1))))
