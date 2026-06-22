@@ -4,6 +4,12 @@ Static analyzer for Clojure and Speclj tests. Classifies each test as **extrover
 
 An introverted test passes but does not ground its assertions in SUT behavior — for example, asserting on literals, test-local data, or `clojure.core` helpers without calling production code.
 
+## Intended Use
+
+Deintroverter is a tool for programmers to interrogate the structure of tests — to see which tests ground their assertions in production code and which do not. Run it when reviewing a test suite, exploring unfamiliar specs, or deciding where to strengthen coverage.
+
+Use it **manually**: point it at paths, read the report, and follow up in the editor. It is not meant to be wired into CI gates, release checks, or other automated verification or hardening pipelines. Verdicts are heuristic (especially `:likely-extroverted` and `:conditional-assertion`); treat them as guidance for human judgment, not pass/fail criteria.
+
 ## Requirements
 
 - [Babashka](https://babashka.org/)
