@@ -557,18 +557,30 @@
                   coll)
           (process-forms body bindings trace-ctx body-cctx))))))
 
+(defn- invoke-arg-value [arg bindings]
+  (if (and (symbol? arg) (contains? bindings arg))
+    (get bindings arg)
+    arg))
+
 (defn- process-fn-invoke-step [form bindings _trace-ctx walk-state cctx]
-  (when (and (seq? form) (symbol? (first form)) (seq (rest form)))
+  (when (and (seq? form) (symbol? (first form)))
     (when-let [fn-form (get bindings (first form))]
       (when (fn-form? fn-form)
         (let [params (fn-param-syms fn-form)
               body (drop 2 fn-form)
-              new-bindings (merge bindings (zipmap params (rest form)))]
+              new-bindings (merge bindings
+                                  (zipmap params
+                                          (map #(invoke-arg-value % bindings) (rest form))))]
           {:child {:todo body
                    :bindings new-bindings
-                   :ws {:preceding nil :seen-sut? false :done-forms []}
+                   :ws {:preceding nil
+                        :seen-sut? (:seen-sut? walk-state)
+                        :done-forms []
+                        :stub-capture-atoms (:stub-capture-atoms walk-state)
+                        :last-sut-call (:last-sut-call walk-state)
+                        :sut-mutation-atoms (:sut-mutation-atoms walk-state)}
                    :cctx cctx
-                   :complete {:preceding :resume :seen-sut? :resume}}
+                   :complete {:preceding :resume :seen-sut? :merge-or}}
            :results []
            :preceding (:preceding walk-state)
            :seen-sut? (:seen-sut? walk-state)})))))
@@ -604,6 +616,14 @@
                   [(second form) fn-lit]))
               forms)))
 
+(defn- fixture-bindings-from-forms [forms]
+  (into {}
+        (keep (fn [form]
+                (when (and (seq? form) (= 'with (first form)) (>= (count form) 3)
+                           (symbol? (second form)))
+                  [(second form) (nth form 2)]))
+              forms)))
+
 (defn- test-line [form]
   (or (:line (meta form)) (:row (meta form))))
 
@@ -631,7 +651,9 @@
 
           (#{'describe 'context} (first form))
           (let [body (rest form)
-                block-helpers (merge inherited-helpers (helper-bindings-from-forms body))]
+                block-helpers (merge inherited-helpers
+                                     (helper-bindings-from-forms body)
+                                     (fixture-bindings-from-forms body))]
             (recur (rest pending)
                    (into results (find-tests-in-forms body block-helpers))))
 
@@ -644,9 +666,44 @@
 (defn- sut-invoke-form? [form _bindings trace-ctx]
   (trace/direct-sut-invoke-form? form trace-ctx))
 
+(defn- helper-fn-body [fn-form]
+  (let [body (drop 2 fn-form)]
+    (if (= 1 (count body))
+      (first body)
+      (cons 'do body))))
+
+(defn- helper-invoke-reaches-sut? [form bindings trace-ctx]
+  (when (and (seq? form) (symbol? (first form)))
+    (when-let [fn-form (get bindings (first form))]
+      (when (fn-form? fn-form)
+        (let [params (fn-param-syms fn-form)
+              arg-bindings (merge bindings
+                                  (zipmap params
+                                          (map #(invoke-arg-value % bindings) (rest form))))]
+          (trace/reaches-sut-likely? (helper-fn-body fn-form) arg-bindings trace-ctx))))))
+
+(defn- var-deref-form? [form]
+  (and (seq? form) (= 2 (count form))
+       (#{'deref 'clojure.core/deref} (first form))))
+
+(defn- var-deref-reaches-sut? [form trace-ctx]
+  (when (var-deref-form? form)
+    (let [arg (second form)]
+      (when (and (seq? arg) (= 'var (first arg)) (symbol? (second arg)))
+        (trace/reaches-sut? (second arg) {} trace-ctx)))))
+
+(defn- bound-invoke-reaches-sut? [form bindings trace-ctx]
+  (when (and (seq? form) (symbol? (first form)))
+    (when-let [bound (get bindings (first form))]
+      (or (var-deref-reaches-sut? bound trace-ctx)
+          (helper-invoke-reaches-sut? bound bindings trace-ctx)))))
+
 (defn- form-reaches-sut? [form bindings trace-ctx]
   (or (sut-invoke-form? form bindings trace-ctx)
-      (trace/reaches-sut-likely? form bindings trace-ctx)))
+      (trace/reaches-sut-likely? form bindings trace-ctx)
+      (var-deref-reaches-sut? form trace-ctx)
+      (helper-invoke-reaches-sut? form bindings trace-ctx)
+      (bound-invoke-reaches-sut? form bindings trace-ctx)))
 
 (def ^:private underlying-conditional-reasons
   {:extroverted :would-be-extroverted
@@ -700,22 +757,50 @@
       (recur (get bindings f) (conj seen f))
       f)))
 
+(defn- collect-seq-forms [form]
+  (loop [stack [form] forms #{}]
+    (if (empty? stack)
+      (seq forms)
+      (let [node (peek stack)
+            stack (pop stack)
+            children (cond
+                       (map? node) (vals node)
+                       (vector? node) (seq node)
+                       (seq? node) (seq node)
+                       :else nil)]
+        (if-not (seq? node)
+          (recur stack forms)
+          (recur (into stack (reverse (vec (or children []))))
+                 (conj forms node)))))))
+
+(defn- production-invoke-form? [form bindings trace-ctx]
+  (and (seq? form) (symbol? (first form))
+       (not (contains? non-asserted-subject-heads (first form)))
+       (or (form-reaches-sut? form bindings trace-ctx)
+           (namespaced-production-invoke? form bindings trace-ctx))))
+
 (defn- asserted-production-invoke? [form bindings trace-ctx]
   (let [subject (resolve-asserted-subject form bindings)]
-    (and (seq? subject) (symbol? (first subject))
-         (not (contains? non-asserted-subject-heads (first subject)))
-         (or (form-reaches-sut? subject bindings trace-ctx)
-             (namespaced-production-invoke? subject bindings trace-ctx)))))
+    (boolean (some #(production-invoke-form? % bindings trace-ctx)
+                   (collect-seq-forms subject)))))
+
+(defn- direct-assertion-evidence [subject bindings trace-ctx]
+  (if (production-invoke-form? subject bindings trace-ctx)
+    :sut-invoke
+    :nested-sut-invoke))
 
 (defn- direct-assertion-result [form bindings trace-ctx cctx]
   (let [subject (resolve-asserted-subject form bindings)
-        sut? (form-reaches-sut? subject bindings trace-ctx)]
+        sut? (form-reaches-sut? subject bindings trace-ctx)
+        trace-target (or (some #(when (production-invoke-form? % bindings trace-ctx) %)
+                               (collect-seq-forms subject))
+                         subject)]
     (finalize-assertion-result
      {:verdict (if sut? :extroverted :likely-extroverted)
       :reason (when-not sut? :sut-direct-assertion-heuristic)
-      :trace (assoc (trace/explain-trace subject bindings trace-ctx)
+      :trace (assoc (trace/explain-trace trace-target bindings trace-ctx)
                     :assertion-form form
-                    :direct-assertion-evidence :sut-invoke)}
+                    :direct-assertion-evidence (direct-assertion-evidence subject bindings trace-ctx))}
      cctx)))
 
 (defn- assertion-result
@@ -914,19 +999,26 @@
                   (deref-target-syms-in-form asserted-form))
         :world-atom-readback))))
 
+(defn- sut-result-rhs-form [v]
+  (if (and (seq? v) (= 'get (first v)) (>= (count v) 2))
+    (nth v 1)
+    v))
+
+(defn- binding-value-reaches-sut? [v bindings trace-ctx]
+  (or (form-reaches-sut? v bindings trace-ctx)
+      (namespaced-production-invoke? v bindings trace-ctx)))
+
 (defn- let-bound-sut-result-syms [bindings trace-ctx]
   (into #{} (keep (fn [[k v]]
                     (when (and (symbol? k)
-                               (or (form-reaches-sut? v bindings trace-ctx)
-                                   (namespaced-production-invoke? v bindings trace-ctx)))
+                               (binding-value-reaches-sut? (sut-result-rhs-form v) bindings trace-ctx))
                       k))
                   bindings)))
 
 (defn- sut-result-binding-value [sym bindings trace-ctx]
   (let [v (get bindings sym)]
-    (when (or (form-reaches-sut? v bindings trace-ctx)
-              (namespaced-production-invoke? v bindings trace-ctx))
-      v)))
+    (when (binding-value-reaches-sut? (sut-result-rhs-form v) bindings trace-ctx)
+      (sut-result-rhs-form v))))
 
 (defn- sut-result-trace-target [asserted-form bindings trace-ctx]
   (some #(sut-result-binding-value % bindings trace-ctx)
@@ -937,6 +1029,30 @@
     (when (seq (clojure.set/intersection (let-bound-sut-result-syms bindings trace-ctx)
                                          (symbols-in-form asserted-form)))
       :sut-result-read)))
+
+(def ^:private catch-exception-marker '__catch-exception__)
+
+(defn- catch-exception-sym? [sym bindings]
+  (= catch-exception-marker (get bindings sym)))
+
+(defn- ex-data-from-catch-exception? [form bindings]
+  (and (seq? form) (= 'ex-data (first form)) (= 2 (count form))
+       (catch-exception-sym? (second form) bindings)))
+
+(defn- catch-derived-binding-syms [bindings]
+  (into #{}
+        (keep (fn [[k v]]
+                (when (and (symbol? k) (ex-data-from-catch-exception? v bindings))
+                  k))
+              bindings)))
+
+(defn- exception-catch-assertion-evidence [asserted-form bindings trace-ctx walk-state]
+  (when (= :introverted (:verdict (trace/trace-form asserted-form bindings trace-ctx)))
+    (when (:seen-sut? walk-state)
+      (when (or (some #(catch-exception-sym? % bindings) (symbols-in-form asserted-form))
+                (seq (clojure.set/intersection (catch-derived-binding-syms bindings)
+                                                 (symbols-in-form asserted-form))))
+        :exception-catch-assertion))))
 
 (defn- wiring-capture-evidence [asserted-form bindings trace-ctx walk-state]
   (when (= :introverted (:verdict (trace/trace-form asserted-form bindings trace-ctx)))
@@ -1006,6 +1122,7 @@
     (or (sut-atom-read-evidence asserted-form bindings trace-ctx walk-state)
         (world-atom-readback-evidence asserted-form bindings trace-ctx walk-state)
         (sut-result-read-evidence asserted-form bindings trace-ctx)
+        (exception-catch-assertion-evidence asserted-form bindings trace-ctx walk-state)
         (when (immediate-preceding-sut? asserted-form bindings trace-ctx (:preceding walk-state))
           :immediate-preceding-sut)
         (when (and (:seen-sut? walk-state)
@@ -1021,6 +1138,7 @@
         trace-target (case evidence
                        (:sut-atom-read :world-atom-readback) sut-call
                        :sut-result-read (or sut-result-call assertion-form)
+                       :exception-catch-assertion (or sut-call assertion-form)
                        :immediate-preceding-sut preceding
                        :test-state-binding asserted-form
                        assertion-form)]
@@ -1030,7 +1148,8 @@
       :trace (cond-> (trace/explain-trace trace-target bindings trace-ctx)
                true (assoc :assertion-form assertion-form
                            :side-effect-evidence evidence)
-               (or (and sut-call (#{:sut-atom-read :world-atom-readback :immediate-preceding-sut} evidence))
+               (or (and sut-call (#{:sut-atom-read :world-atom-readback :immediate-preceding-sut
+                                     :exception-catch-assertion} evidence))
                    (= :sut-result-read evidence))
                (assoc :preceding-sut-call (or sut-call sut-result-call)))}
      cctx)))
@@ -1107,6 +1226,14 @@
                             :ws (assoc walk-state
                                        :done-forms []
                                        :stub-capture-atoms stub-captures)
+                            :cctx cctx
+                            :complete {:preceding :child :seen-sut? :child}})))
+
+(defn- process-catch-step [form bindings walk-state cctx]
+  (when (and (seq? form) (= 'catch (first form)) (>= (count form) 4) (symbol? (nth form 2)))
+    (child-step walk-state {:todo (drop 3 form)
+                            :bindings (assoc bindings (nth form 2) catch-exception-marker)
+                            :ws walk-state
                             :cctx cctx
                             :complete {:preceding :child :seen-sut? :child}})))
 
@@ -1188,7 +1315,7 @@
    'binding process-let-step
    'do process-seq-head
    'try process-seq-head
-   'catch process-seq-head
+   'catch process-catch-step
    'finally process-seq-head
    'with-redefs process-with-redefs-step
    'fn process-fn-step})

@@ -34,5 +34,14 @@
   ((:update-game-map! ctx)
    #(assoc-in % path (assoc contents :major-invasion true))))
 
+(defn parse-dimensions [_ _ max-size]
+  (throw (ex-info "too large" {:max-cols (quot max-size 11)})))
+
+(defn build-map [rows cols]
+  (vec (repeat rows (vec (repeat cols 0)))))
+
+(defn- private-step! [_]
+  (throw (ex-info "step failed" {})))
+
 
 

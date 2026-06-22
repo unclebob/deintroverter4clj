@@ -136,6 +136,49 @@
            (get-in (second findings) [:trace :assertions 0 :direct-assertion-evidence])))
     (is (= :introverted (:verdict (nth findings 2))))))
 
+(deftest classifies-nested-sut-in-assertion-as-extroverted
+  (let [findings (analyze "nested_sut_assertion.clj" 'myapp.nested-sut-assertion-spec #{'myapp.core 'myapp.debug})]
+    (is (= 2 (count findings)))
+    (is (= :extroverted (:verdict (first findings))))
+    (is (= :extroverted (get-in (first findings) [:trace :assertions 0 :verdict])))
+    (is (= :introverted (:verdict (second findings))))))
+
+(deftest classifies-exception-catch-assertion-as-likely-extroverted
+  (let [findings (analyze "exception_catch_assertion.clj" 'myapp.exception-catch-assertion-spec #{'myapp.core})]
+    (is (= 3 (count findings)))
+    (is (= :likely-extroverted (:verdict (first findings))))
+    (is (= :sut-side-effect-heuristic (:reason (first findings))))
+    (is (= :exception-catch-assertion
+           (get-in (first findings) [:trace :assertions 0 :side-effect-evidence])))
+    (is (= :exception-catch-assertion
+           (get-in (first findings) [:trace :assertions 1 :side-effect-evidence])))
+    (is (= :likely-extroverted (:verdict (second findings))))
+    (is (= :exception-catch-assertion
+           (get-in (second findings) [:trace :assertions 1 :side-effect-evidence])))
+    (is (= :introverted (:verdict (nth findings 2))))))
+
+(deftest classifies-pipeline-var-deref-helper-as-likely-extroverted
+  (let [findings (analyze "pipeline_var_deref.clj" 'myapp.pipeline-var-deref-spec #{'myapp.core})]
+    (is (= 1 (count findings)))
+    (is (= :likely-extroverted (:verdict (first findings))))
+    (is (= :exception-catch-assertion
+           (get-in (first findings) [:trace :assertions 0 :side-effect-evidence])))))
+
+(deftest classifies-speclj-with-fixture-as-extroverted
+  (let [findings (analyze "speclj_with_fixture.clj" 'myapp.speclj-with-fixture-spec #{'myapp.core})]
+    (is (= 2 (count findings)))
+    (is (= :extroverted (:verdict (first findings))))
+    (is (= :introverted (:verdict (second findings))))))
+
+(deftest classifies-helper-destructure-result-as-likely-extroverted
+  (let [findings (analyze "helper_destructure_result.clj" 'myapp.helper-destructure-result-spec #{'myapp.core})]
+    (is (= 2 (count findings)))
+    (is (= :likely-extroverted (:verdict (first findings))))
+    (is (= :sut-direct-assertion-heuristic (:reason (first findings))))
+    (is (= :nested-sut-invoke
+           (get-in (first findings) [:trace :assertions 0 :direct-assertion-evidence])))
+    (is (= :introverted (:verdict (second findings))))))
+
 (deftest classifies-with-redefs-world-readback-as-likely-extroverted
   (let [findings (analyze "with_redefs_world_readback.clj"
                           'myapp.with-redefs-world-readback-spec
