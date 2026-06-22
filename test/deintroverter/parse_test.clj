@@ -70,6 +70,20 @@
     (is (= 3 (count forms)))
     (is (= 'myapp.format (:namespace (parse/parse-ns-form (first forms)))))))
 
+(deftest namespace-from-source-reads-reader-conditionals-in-ns-form
+  (is (= 'myapp.protocols
+         (parse/namespace-from-source
+          (str "(ns myapp.protocols\n"
+               "  #?(:cljs (:refer-clojure :exclude [clone]))\n"
+               "  (:require [clojure.spec.alpha :as s]))\n"
+               "(defn update-elements [x] x)"))))
+  (is (= 'myapp.core
+         (parse/namespace-from-source
+          (str "(ns myapp.core\n"
+               "  (:require [foo.bar :as q #?@(:cljs [:include-macros true])]\n"
+               "            #?(:clj [clojure.java.io :as io])))\n"
+               "(defn process-events [x] x)")))))
+
 (deftest reads-alias-qualified-keywords
   (let [forms (parse/read-string-all
                (str "(ns myapp.game-spec\n"

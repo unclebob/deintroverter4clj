@@ -23,12 +23,20 @@
   (when namespace
     {:auto-resolve (assoc (or aliases {}) :current namespace)}))
 
+(defn- ns-form-from-source-with-opts [s opts]
+  (let [ns-form (edamame/parse-string s opts)]
+    (when (and (seq? ns-form) (= 'ns (first ns-form)))
+      ns-form)))
+
 (defn- ns-info-from-source [s]
   (try
-    (let [ns-form (edamame/parse-string s (base-parse-opts))]
-      (when (and (seq? ns-form) (= 'ns (first ns-form)))
-        (parse-ns-form ns-form)))
-    (catch Exception _ nil)))
+    (some-> (ns-form-from-source-with-opts s (base-parse-opts)) parse-ns-form)
+    (catch Exception e
+      (when (conditional-read-error? e)
+        (try
+          (some-> (ns-form-from-source-with-opts s (cljc-parse-opts (base-parse-opts)))
+                  parse-ns-form)
+          (catch Exception _ nil))))))
 
 (defn- parse-string-all-with-opts [s opts]
   (try

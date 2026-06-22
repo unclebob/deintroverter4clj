@@ -26,3 +26,9 @@
     (is (contains? (:in-project-namespaces ctx) 'myapp.spec-mother))
     (is (= "spec/myapp/spec_mother.clj"
            (get (:namespace-paths ctx) 'myapp.spec-mother)))))
+
+(deftest discovers-cljc-namespace-with-reader-conditionals
+  (let [ctx (project/load-context fixture-root)]
+    (is (contains? (:in-project-namespaces ctx) 'myapp.reader-conditional))
+    (is (= "src/myapp/reader_conditional.cljc"
+           (get (:namespace-paths ctx) 'myapp.reader-conditional)))))
