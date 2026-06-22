@@ -13,6 +13,8 @@
     deintroverter.stack-depth-test
     deintroverter.assertions-test
     deintroverter.analyze-test
+    deintroverter.provenance-test
+    deintroverter.golden-test
     deintroverter.report-test
     deintroverter.core-test
     deintroverter.speclj-test])

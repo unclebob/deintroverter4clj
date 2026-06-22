@@ -67,7 +67,8 @@
   (let [findings (analyze "side_effect_helpers.clj" 'myapp.side-effect-spec #{'myapp.core})]
     (is (= 3 (count findings)))
     (is (= :likely-extroverted (:verdict (first findings))))
-    (is (= :sut-side-effect-heuristic (:reason (first findings))))
+    (is (= :provenance-link (:reason (first findings))))
+    (is (= :sut-side-effect-heuristic (:reason-legacy (first findings))))
     (is (= :immediate-preceding-sut
            (get-in (first findings) [:trace :assertions 0 :side-effect-evidence])))
     (is (= :likely-extroverted (:verdict (second findings))))
@@ -79,7 +80,8 @@
   (let [findings (analyze "stub_capture_wiring.clj" 'myapp.stub-capture-wiring-spec #{'myapp.core})]
     (is (= 2 (count findings)))
     (is (= :likely-extroverted (:verdict (first findings))))
-    (is (= :sut-wiring-heuristic (:reason (first findings))))
+    (is (= :external-wiring (:reason (first findings))))
+    (is (= :sut-wiring-heuristic (:reason-legacy (first findings))))
     (is (= :stub-capture
            (get-in (first findings) [:trace :assertions 0 :wiring-evidence])))
     (is (= :introverted (:verdict (second findings))))
@@ -89,14 +91,16 @@
   (let [findings (analyze "callback_spy_wiring.clj" 'myapp.callback-spy-wiring-spec #{'myapp.core})]
     (is (= 1 (count findings)))
     (is (= :likely-extroverted (:verdict (first findings))))
-    (is (= :sut-wiring-heuristic (:reason (first findings))))
+    (is (= :external-wiring (:reason (first findings))))
+    (is (= :sut-wiring-heuristic (:reason-legacy (first findings))))
     (is (= :stub-capture (get-in (first findings) [:trace :assertions 0 :wiring-evidence])))))
 
 (deftest classifies-nested-spy-wiring-as-likely-extroverted
   (let [findings (analyze "nested_spy_wiring.clj" 'myapp.nested-spy-wiring-spec #{'myapp.core})]
     (is (= 1 (count findings)))
     (is (= :likely-extroverted (:verdict (first findings))))
-    (is (= :sut-wiring-heuristic (:reason (first findings))))))
+    (is (= :external-wiring (:reason (first findings))))
+    (is (= :sut-wiring-heuristic (:reason-legacy (first findings))))))
 
 (deftest classifies-sut-defined-atom-reads-as-extroverted-not-wiring
   (let [findings (analyze "sut_atom_side_effect.clj" 'myapp.sut-atom-side-effect-spec #{'myapp.core})]
@@ -108,7 +112,8 @@
   (let [findings (analyze "world_atom_readback.clj" 'myapp.world-atom-readback-spec #{'myapp.core})]
     (is (= 2 (count findings)))
     (is (= :likely-extroverted (:verdict (first findings))))
-    (is (= :sut-side-effect-heuristic (:reason (first findings))))
+    (is (= :provenance-link (:reason (first findings))))
+    (is (= :sut-side-effect-heuristic (:reason-legacy (first findings))))
     (is (= :world-atom-readback
            (get-in (first findings) [:trace :assertions 0 :side-effect-evidence])))
     (is (= :world-atom-readback
@@ -119,7 +124,8 @@
   (let [findings (analyze "debug_sut_result.clj" 'myapp.debug-sut-result-spec #{'myapp.core})]
     (is (= 2 (count findings)))
     (is (= :likely-extroverted (:verdict (first findings))))
-    (is (= :sut-side-effect-heuristic (:reason (first findings))))
+    (is (= :provenance-link (:reason (first findings))))
+    (is (= :sut-side-effect-heuristic (:reason-legacy (first findings))))
     (is (= :sut-result-read
            (get-in (first findings) [:trace :assertions 0 :side-effect-evidence])))
     (is (= :sut-result-read
@@ -131,7 +137,8 @@
     (is (= 3 (count findings)))
     (is (= :extroverted (:verdict (first findings))))
     (is (= :likely-extroverted (:verdict (second findings))))
-    (is (= :sut-direct-assertion-heuristic (:reason (second findings))))
+    (is (= :provenance-link (:reason (second findings))))
+    (is (= :sut-direct-assertion-heuristic (:reason-legacy (second findings))))
     (is (= :sut-invoke
            (get-in (second findings) [:trace :assertions 0 :direct-assertion-evidence])))
     (is (= :introverted (:verdict (nth findings 2))))))
@@ -147,7 +154,8 @@
   (let [findings (analyze "exception_catch_assertion.clj" 'myapp.exception-catch-assertion-spec #{'myapp.core})]
     (is (= 3 (count findings)))
     (is (= :likely-extroverted (:verdict (first findings))))
-    (is (= :sut-side-effect-heuristic (:reason (first findings))))
+    (is (= :provenance-link (:reason (first findings))))
+    (is (= :sut-side-effect-heuristic (:reason-legacy (first findings))))
     (is (= :exception-catch-assertion
            (get-in (first findings) [:trace :assertions 0 :side-effect-evidence])))
     (is (= :exception-catch-assertion
@@ -174,7 +182,8 @@
   (let [findings (analyze "helper_destructure_result.clj" 'myapp.helper-destructure-result-spec #{'myapp.core})]
     (is (= 2 (count findings)))
     (is (= :likely-extroverted (:verdict (first findings))))
-    (is (= :sut-direct-assertion-heuristic (:reason (first findings))))
+    (is (= :provenance-link (:reason (first findings))))
+    (is (= :sut-direct-assertion-heuristic (:reason-legacy (first findings))))
     (is (= :nested-sut-invoke
            (get-in (first findings) [:trace :assertions 0 :direct-assertion-evidence])))
     (is (= :introverted (:verdict (second findings))))))
@@ -192,7 +201,8 @@
   (let [findings (analyze "file_dependency.clj" 'myapp.file-dependency-spec #{'myapp.core})]
     (is (= 2 (count findings)))
     (is (= :likely-extroverted (:verdict (first findings))))
-    (is (= :file-dependency (:reason (first findings))))
+    (is (= :external-file (:reason (first findings))))
+    (is (= :file-dependency (:reason-legacy (first findings))))
     (is (= :file-dependency
            (get-in (first findings) [:trace :assertions 0 :external-dependency-evidence])))
     (is (= :introverted (:verdict (second findings))))

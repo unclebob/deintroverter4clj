@@ -35,15 +35,18 @@
       (and (not= :extroverted verdict)
            (not= :likely-extroverted verdict))))
 
+(def ^:private conditional-cause-formatters
+  {:missing-doseq-guard (fn [{:keys [coll]}] (str "missing doseq guard on " coll))
+   :near-doseq-guard (fn [{:keys [coll]}] (str "near doseq guard on " coll))
+   :non-flattenable-doseq (fn [{:keys [coll]}] (str "non-flattenable doseq collection " coll))
+   :runtime-dotimes (fn [{:keys [count]}] (str "runtime dotimes count " count))
+   :partial-dispatch-if (fn [_] "partial dispatch-if (one branch asserts)")
+   :runtime-conditional (fn [{:keys [head]}] (str "runtime " (name head)))
+   :malformed-doseq (fn [_] "malformed doseq binding")})
+
 (defn- format-conditional-cause [cause context]
-  (case cause
-    :missing-doseq-guard (str "missing doseq guard on " (:coll context))
-    :near-doseq-guard (str "near doseq guard on " (:coll context))
-    :non-flattenable-doseq (str "non-flattenable doseq collection " (:coll context))
-    :runtime-dotimes (str "runtime dotimes count " (:count context))
-    :partial-dispatch-if "partial dispatch-if (one branch asserts)"
-    :runtime-conditional (str "runtime " (name (:head context)))
-    :malformed-doseq "malformed doseq binding"
+  (if-let [formatter (get conditional-cause-formatters cause)]
+    (formatter context)
     (name cause)))
 
 (defn print-human

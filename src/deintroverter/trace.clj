@@ -1,6 +1,8 @@
 (ns deintroverter.trace
   (:require [clojure.edn :as edn]
-            [clojure.java.io :as io]))
+            [clojure.java.io :as io]
+            [clojure.set :refer [intersection]]
+            [deintroverter.forms :as forms]))
 
 (defn- load-core-denylist []
   (-> "deintroverter/core_sym_denylist.edn"
@@ -41,11 +43,14 @@
              (contains? (:sut ctx) (get (:refer-syms ctx) sym)))
     :proven))
 
-(defn- refer-all-sut-level [sym ctx]
+(defn- refer-all-level [sym {:keys [core-syms]} target-set]
   (when (and (nil? (namespace sym))
-             (not (contains? (:core-syms ctx) sym))
-             (seq (:refer-all-sut ctx)))
+             (not (contains? core-syms sym))
+             (seq target-set))
     :likely))
+
+(defn- refer-all-sut-level [sym ctx]
+  (refer-all-level sym ctx (:refer-all-sut ctx)))
 
 (defn- sym-sut-level [sym ctx]
   (or (namespaced-sut-level sym ctx)
@@ -67,12 +72,6 @@
     {:sym sym
      :resolved-ns (resolved-ns-for-sym sym ctx)
      :level (or (call-sut-level form ctx) :none)}))
-
-(defn- form-children [node]
-  (cond
-    (seq? node) (seq node)
-    (coll? node) (seq node)
-    :else nil))
 
 (defn- push-children [stack children]
   (if-let [xs (seq children)]
@@ -139,15 +138,6 @@
 
 (declare trace-form)
 
-(defn- symbols-in-form [form]
-  (loop [stack [form] syms #{}]
-    (if (empty? stack)
-      syms
-      (let [node (peek stack)
-            stack (pop stack)
-            syms (if (symbol? node) (conj syms node) syms)]
-        (recur (push-children stack (form-children node)) syms)))))
-
 (defn- binding-origin-level [sym bindings ctx tracing-syms]
   (when-not (contains? tracing-syms sym)
     (case (:verdict (trace-form (get bindings sym) bindings ctx (conj tracing-syms sym)))
@@ -160,25 +150,13 @@
    (binding-origin-levels form bindings ctx #{}))
   ([form bindings ctx tracing-syms]
    (keep #(binding-origin-level % bindings ctx tracing-syms)
-         (filter #(contains? bindings %) (symbols-in-form form)))))
+         (filter #(contains? bindings %) (forms/symbols-in-form form)))))
 
-(defn- deref-form? [form]
-  (and (seq? form)
-       (= 'clojure.core/deref (first form))
-       (symbol? (second form))))
+(defn- trace-deref-form? [form]
+  (and (forms/deref-form? form) (symbol? (second form))))
 
 (defn- collect-derefs [form]
-  (loop [stack [form] derefs #{}]
-    (if (empty? stack)
-      derefs
-      (let [node (peek stack)
-            stack (pop stack)]
-        (if-not (seq? node)
-          (recur stack derefs)
-          (if (deref-form? node)
-            (recur (push-children stack (rest node))
-                   (conj derefs node))
-            (recur (push-children stack (seq node)) derefs)))))))
+  (into #{} (filter trace-deref-form? (forms/walk-nodes form))))
 
 (defn- namespaced-var-ref-level [sym ctx]
   (let [ns-s (fn-sym-ns sym ctx)]
@@ -197,7 +175,7 @@
 
 (defn- sym-and-deref-levels [level-fn form bindings ctx]
   (concat
-   (keep #(level-fn % bindings ctx) (symbols-in-form form))
+   (keep #(level-fn % bindings ctx) (forms/symbols-in-form form))
    (keep #(level-fn (second %) bindings ctx) (collect-derefs form))))
 
 (defn- sut-var-ref-levels [form bindings ctx]
@@ -208,10 +186,7 @@
     (contains? test-modules (symbol ns-s))))
 
 (defn- refer-all-test-module-level [sym ctx]
-  (when (and (nil? (namespace sym))
-             (not (contains? (:core-syms ctx) sym))
-             (seq (:refer-all-test-modules ctx)))
-    :likely))
+  (refer-all-level sym ctx (:refer-all-test-modules ctx)))
 
 (defn- test-module-call-level [form ctx]
   (when-let [target (invoke-target-sym form)]
@@ -261,13 +236,27 @@
   [form bindings ctx]
   (boolean (some #{:proven :likely} (sut-reach-levels form bindings ctx))))
 
+(defn- clojure-platform-ns? [ns-name]
+  (or (= ns-name "clojure")
+      (.startsWith ns-name "clojure.")))
+
+(defn namespaced-production-invoke?
+  "True when form is a namespaced invoke outside clojure.* and not a test-module call."
+  [form bindings ctx]
+  (and (seq? form) (symbol? (first form))
+       (when-let [ns (namespace (first form))]
+         (and (not (clojure-platform-ns? ns))
+              (not (reaches-test-module? form bindings ctx))))))
+
 (defn direct-sut-invoke-form?
   "True when the outermost list form is a direct call to a SUT function.
   Unlike trace-form, does not search nested calls inside arguments."
   [form ctx]
   (boolean (call-sut-level form ctx)))
 
-(defn- resolve-bound-form [form bindings]
+(defn resolve-bound-form
+  "Chase a symbol through bindings to its resolved form."
+  [form bindings]
   (loop [f form seen #{}]
     (if (and (symbol? f) (contains? bindings f) (not (contains? seen f)))
       (recur (get bindings f) (conj seen f))
@@ -336,7 +325,7 @@
      :calls-traced (vec (keep #(explain-call % ctx) calls))
      :binding-origins
      (vec (for [sym (sort (filter #(contains? bindings %)
-                                  (symbols-in-form expanded)))
+                                  (forms/symbols-in-form expanded)))
                :let [origin (get bindings sym)
                      {:keys [verdict reason]} (trace-form origin bindings ctx)]]
             {:sym sym :origin origin :verdict verdict :reason reason}))
@@ -352,8 +341,8 @@
                                      (when (contains? sut ns)
                                        [sym ns]))
                                    refer-syms))
-        refer-all-sut (clojure.set/intersection sut refer-all)
-        refer-all-test-modules (clojure.set/intersection test-modules refer-all)]
+        refer-all-sut (intersection sut refer-all)
+        refer-all-test-modules (intersection test-modules refer-all)]
     {:sut sut
      :resolve-ns resolve-ns
      :refer-syms sut-refer-syms

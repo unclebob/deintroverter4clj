@@ -1,0 +1,13 @@
+{:negative-introverted
+ ["introverted_literal.clj"
+  "empire_stamping_negative.clj"]
+ :negative-paired-second-examples
+ ["nested_sut_assertion.clj"
+  "exception_catch_assertion.clj"
+  "speclj_with_fixture.clj"
+  "helper_destructure_result.clj"
+  "debug_sut_result.clj"
+  "side_effect_helpers.clj"
+  "stub_capture_wiring.clj"
+  "world_atom_readback.clj"
+  "file_dependency.clj"]}

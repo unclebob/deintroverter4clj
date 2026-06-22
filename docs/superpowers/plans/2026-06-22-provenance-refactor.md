@@ -572,12 +572,14 @@ PROJECT_ROOT=/path/to/empire/empire-2025 bb scripts/check_empire_introverted.clj
 
 | PR | Task | Status |
 |----|------|--------|
-| PR0 | Task 0: Baseline & contracts | - [ ] |
-| PR1 | Task 1: Provenance core | - [ ] |
-| PR2 | Task 2: Wire into walk | - [ ] |
-| PR3a | Task 3a: sut-result + exception-catch | - [ ] |
-| PR3b | Task 3b: direct-assertion | - [ ] |
-| PR3c | Task 3c: collapse side-effect-evidence | - [ ] |
-| PR4a | Task 4a: trace consolidation | - [ ] |
-| PR4b | Task 4b: walk.clj extraction | - [ ] |
-| PR5 | Task 5: reason taxonomy | - [ ] |
+| PR0 | Task 0: Baseline & contracts | - [x] |
+| PR1 | Task 1: Provenance core | - [x] |
+| PR2 | Task 2: Wire into walk | - [x] |
+| PR3a | Task 3a: sut-result + exception-catch | - [x] |
+| PR3b | Task 3b: direct-assertion | - [x] |
+| PR3c | Task 3c: collapse side-effect-evidence | - [x] |
+| PR4a | Task 4a: trace consolidation | - [x] |
+| PR4b | Task 4b: walk.clj extraction | - [x] |
+| PR5 | Task 5: reason taxonomy | - [x] |
+
+**Final metrics (2026-06-22):** 208 tests, 442 assertions, 0 failures; `analyze.clj` 233 LOC; `walk.clj` 959 LOC; empire introverted 0; dry4clj 0 duplicates; crap4clj 0 offenders > 6; mutation survivors 0/61 provenance, 0/37 analyze, 0/38 external.

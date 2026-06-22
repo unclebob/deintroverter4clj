@@ -56,6 +56,22 @@
     (let [out (with-out-str (report/print-human findings false))]
       (is (str/includes? out "cause: missing doseq guard on rows")))))
 
+(deftest human-output-formats-all-conditional-causes
+  (doseq [[cause context expected]
+          [[:near-doseq-guard {:coll 'items} "near doseq guard on items"]
+           [:non-flattenable-doseq {:coll 'stream} "non-flattenable doseq collection stream"]
+           [:runtime-dotimes {:count 99} "runtime dotimes count 99"]
+           [:partial-dispatch-if {} "partial dispatch-if (one branch asserts)"]
+           [:runtime-conditional {:head 'when} "runtime when"]
+           [:malformed-doseq {} "malformed doseq binding"]
+           [:custom-cause {} "custom-cause"]]]
+    (let [findings [{:file "t.clj" :line 1 :test-name "x" :test-form :it
+                     :verdict :conditional-assertion :reason :would-be-extroverted
+                     :conditional-cause cause
+                     :conditional-context context}]
+          out (with-out-str (report/print-human findings false))]
+      (is (str/includes? out (str "cause: " expected))))))
+
 (deftest summary-groups-conditional-causes
   (let [findings [{:verdict :conditional-assertion :reason :would-be-extroverted
                    :conditional-cause :missing-doseq-guard}
