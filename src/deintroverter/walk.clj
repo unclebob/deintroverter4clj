@@ -137,6 +137,21 @@
   (let [params (second fn-form)]
     (if (vector? params) (vec params) (vector (first params)))))
 
+(defn- helper-fn-body [fn-form]
+  (let [body (drop 2 fn-form)]
+    (if (= 1 (count body))
+      (first body)
+      (cons 'do body))))
+
+(defn- self-referential-helper? [fn-sym fn-form]
+  (contains? (forms/symbols-in-form (helper-fn-body fn-form)) fn-sym))
+
+(defn- inlinable-helper-invoke? [fn-sym bindings inlining]
+  (when-let [fn-form (get bindings fn-sym)]
+    (and (fn-form? fn-form)
+         (not (contains? inlining fn-sym))
+         (not (self-referential-helper? fn-sym fn-form)))))
+
 (defn- doseq-coll [coll-expr bindings]
   (cond
     (vector? coll-expr) coll-expr
@@ -498,26 +513,33 @@
 (defn- flattenable-dotimes-count? [n-expr]
   (and (number? n-expr) (pos? n-expr) (<= n-expr max-flattened-dotimes)))
 
-(defn- process-dotimes [form bindings trace-ctx cctx]
+(defn- inlining-seed-ws [walk-state]
+  (when walk-state
+    (select-keys walk-state [:inlining-helpers])))
+
+(defn- process-dotimes [form bindings trace-ctx cctx walk-state]
   (when (and (>= (count form) 3) (vector? (second form)))
     (let [[sym n-expr] (second form)
-          body (drop 2 form)]
+          body (drop 2 form)
+          seed (inlining-seed-ws walk-state)]
       (if (flattenable-dotimes-count? n-expr)
         (mapcat (fn [i]
                   (process-forms-results body
                                          (if (symbol? sym) (assoc bindings sym i) bindings)
                                          trace-ctx
-                                         cctx))
+                                         cctx
+                                         seed))
                 (range n-expr))
         (process-forms-results body bindings trace-ctx
-                               (push-cctx-cause cctx :runtime-dotimes {:head 'dotimes :count n-expr}))))))
+                               (push-cctx-cause cctx :runtime-dotimes {:head 'dotimes :count n-expr})
+                               seed)))))
 
 (defn- process-dotimes-step [form bindings trace-ctx walk-state cctx]
   (when (and (>= (count form) 3) (vector? (second form)))
     (let [[sym n-expr] (second form)
           flattened? (flattenable-dotimes-count? n-expr)]
       (if flattened?
-        {:results (vec (process-dotimes form bindings trace-ctx cctx))
+        {:results (vec (process-dotimes form bindings trace-ctx cctx walk-state))
          :preceding (:preceding walk-state)
          :seen-sut? (:seen-sut? walk-state)}
         {:child {:todo (drop 2 form)
@@ -532,10 +554,12 @@
 (defn- process-doseq [form bindings trace-ctx cctx walk-state]
   (let [binding-form (second form)
         body (drop 2 form)
-        done-forms (:done-forms walk-state [])]
+        done-forms (:done-forms walk-state [])
+        seed (inlining-seed-ws walk-state)]
     (if-not (and (vector? binding-form) (= 2 (count binding-form)))
       (process-forms-results body bindings trace-ctx
-                             (push-cctx-cause cctx :malformed-doseq {:head 'doseq}))
+                             (push-cctx-cause cctx :malformed-doseq {:head 'doseq})
+                             seed)
       (let [[bind-expr coll-expr] binding-form
             body-cctx (doseq-conditional-cctx coll-expr bindings done-forms cctx)
             coll (doseq-coll coll-expr bindings)]
@@ -544,9 +568,10 @@
                     (process-forms-results body
                                            (bindings-for-doseq-item bind-expr item bindings)
                                            trace-ctx
-                                           body-cctx))
+                                           body-cctx
+                                           seed))
                   coll)
-          (process-forms-results body bindings trace-ctx body-cctx))))))
+          (process-forms-results body bindings trace-ctx body-cctx seed))))))
 
 (defn- invoke-arg-value [arg bindings]
   (if (and (symbol? arg) (contains? bindings arg))
@@ -555,9 +580,11 @@
 
 (defn- process-fn-invoke-step [form bindings _trace-ctx walk-state cctx]
   (when (and (seq? form) (symbol? (first form)))
-    (when-let [fn-form (get bindings (first form))]
-      (when (fn-form? fn-form)
-        (let [params (fn-param-syms fn-form)
+    (let [fn-sym (first form)
+          inlining (or (:inlining-helpers walk-state) #{})]
+      (when (inlinable-helper-invoke? fn-sym bindings inlining)
+        (let [fn-form (get bindings fn-sym)
+              params (fn-param-syms fn-form)
               body (drop 2 fn-form)
               new-bindings (merge bindings
                                   (zipmap params
@@ -569,7 +596,8 @@
                         :done-forms []
                         :stub-capture-atoms (:stub-capture-atoms walk-state)
                         :last-sut-call (:last-sut-call walk-state)
-                        :sut-mutation-atoms (:sut-mutation-atoms walk-state)}
+                        :sut-mutation-atoms (:sut-mutation-atoms walk-state)
+                        :inlining-helpers (conj inlining fn-sym)}
                    :cctx cctx
                    :complete {:preceding :resume :seen-sut? :merge-or}}
            :results []
@@ -785,12 +813,14 @@
 (defn- result-step [walk-state results]
   (assoc (noop-step walk-state) :results results))
 
-(defn- fresh-walk-state [{:keys [seen-sut? stub-capture-atoms last-sut-call sut-mutation-atoms]}]
+(defn- fresh-walk-state [{:keys [seen-sut? stub-capture-atoms last-sut-call sut-mutation-atoms
+                                 inlining-helpers]}]
   {:preceding nil
    :seen-sut? seen-sut? :done-forms []
    :stub-capture-atoms stub-capture-atoms
    :last-sut-call last-sut-call
-   :sut-mutation-atoms sut-mutation-atoms})
+   :sut-mutation-atoms sut-mutation-atoms
+   :inlining-helpers (or inlining-helpers #{})})
 
 (defn- process-let-step [form bindings walk-state cctx]
   (let [{:keys [body bindings]} (let-bindings form bindings)
@@ -912,13 +942,15 @@
     (or (head-form-step (first form) form bindings trace-ctx walk-state cctx)
         (process-expression-step form bindings trace-ctx walk-state cctx))))
 
-(defn- initial-process-stack [forms bindings preceding seen-sut? cctx]
+(defn- initial-process-stack [forms bindings preceding seen-sut? cctx & [seed-ws]]
   [(process-frame {:todo forms
                    :bindings bindings
-                   :ws {:preceding preceding
-                        :seen-sut? seen-sut?
-                        :done-forms []
-                        :sut-mutation-atoms #{}}
+                   :ws (merge {:preceding preceding
+                               :seen-sut? seen-sut?
+                               :done-forms []
+                               :sut-mutation-atoms #{}
+                               :inlining-helpers #{}}
+                              seed-ws)
                    :cctx cctx})])
 
 (defn- finished-frame-result [frame results]
@@ -941,8 +973,8 @@
        (into results (:results step))])))
 
 (defn- process-forms-sequential
-  [forms bindings trace-ctx preceding seen-sut? cctx]
-   (loop [stack (initial-process-stack forms bindings preceding seen-sut? cctx)
+  [forms bindings trace-ctx preceding seen-sut? cctx & [seed-ws]]
+   (loop [stack (initial-process-stack forms bindings preceding seen-sut? cctx seed-ws)
           results []]
      (if (empty? stack)
        {:results results :preceding preceding :seen-sut? seen-sut?}
@@ -964,7 +996,9 @@
   ([forms bindings trace-ctx]
    (process-forms-results forms bindings trace-ctx empty-cctx))
   ([forms bindings trace-ctx cctx]
-   (:results (process-forms forms bindings trace-ctx {:cctx cctx}))))
+   (process-forms-results forms bindings trace-ctx cctx nil))
+  ([forms bindings trace-ctx cctx seed-ws]
+   (:results (process-forms forms bindings trace-ctx {:cctx cctx :seed-ws seed-ws}))))
 
 (defn process-forms
   "Walk test-body forms and return assertion results.
@@ -973,7 +1007,8 @@
    (process-forms forms bindings trace-ctx {}))
   ([forms bindings trace-ctx opts]
    (let [cctx (or (:cctx opts) empty-cctx)
+         seed-ws (or (:seed-ws opts) {})
          {:keys [results preceding seen-sut?]}
-         (process-forms-sequential forms bindings trace-ctx nil false cctx)]
+         (process-forms-sequential forms bindings trace-ctx nil false cctx seed-ws)]
      {:results results
       :walk-state {:preceding preceding :seen-sut? seen-sut?}})))

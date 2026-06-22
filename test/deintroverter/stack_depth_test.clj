@@ -56,3 +56,11 @@
         findings (analyze/analyze-forms forms {:sut sut :project-ctx project-ctx})]
     (is (= 1 (count findings)))
     (is (= :extroverted (:verdict (first findings))))))
+
+(deftest analyzes-self-recursive-helper-without-overflow
+  (let [project-ctx (project/load-context ".")
+        findings (analyze/analyze-file "test/deintroverter/paths_test.clj"
+                                       {:sut #{'deintroverter.paths}
+                                        :project-ctx project-ctx})]
+    (is (= 3 (count findings)))
+    (is (every? #(= :extroverted (:verdict %)) findings))))
