@@ -10,6 +10,8 @@ Deintroverter is a tool for programmers to interrogate the structure of tests �
 
 Use it **manually**: point it at paths, read the report, and follow up in the editor. It is not meant to be wired into CI gates, release checks, or other automated verification or hardening pipelines. Verdicts are heuristic (especially `:likely-extroverted` and `:conditional-assertion`); treat them as guidance for human judgment, not pass/fail criteria.
 
+It works best on **unit tests** (spec/`_spec.clj` and test/`_test.clj` files that exercise production code directly). Skip **acceptance tests** and any supporting code for acceptance workflows — drivers, generated acceptance specs, fixtures, and helpers under `acceptance/` or `generated-acceptance-specs/`. Those layers orchestrate end-to-end behavior; deintroverter’s SUT-tracing model does not fit them well.
+
 ## Requirements
 
 - [Babashka](https://babashka.org/)
